@@ -47,7 +47,7 @@ class _Node(BaseModel):
 
 class _Configuration(BaseModel):
     operator: str | None = None
-    nodes: list[_Node]
+    nodes: list[_Node] = Field(default_factory=list)
 
     @property
     def conditional(self) -> bool:

@@ -411,3 +411,9 @@ def test_a_range_the_server_cannot_satisfy_starts_over(
     feed = feeds(tmp_path).recent_changes()
 
     assert feed.path.read_bytes() == content
+
+
+def test_a_configuration_without_nodes_has_no_ranges(tmp_path: Path) -> None:
+    [record] = map(advisory_record, read(tmp_path, cve("CVE-2026-118335", configurations=[{}])))
+
+    assert record.advisory.nvd_ranges == ()
