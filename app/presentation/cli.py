@@ -2,9 +2,10 @@ from datetime import UTC, datetime
 
 import httpx
 import typer
+from pydantic import ValidationError
 
-from app.application.ports import AdvisorySourceError, ReplicaError
-from app.application.sync_exploited import ExploitedSyncOutcome, SyncExploited
+from app.application.ports import AdvisorySourceError, CatalogReplacement, ReplicaError
+from app.application.sync_exploited import SyncExploited
 from app.infrastructure.db.advisory_store import SqlAdvisoryStore
 from app.infrastructure.db.engine import create_sqlite_engine
 from app.infrastructure.kev import CisaKevCatalog
@@ -19,17 +20,24 @@ app.add_typer(advisories, name="advisories")
 
 @advisories.command("sync", help="CISA KEV を取り込む")
 def sync_advisories() -> None:
-    settings = Settings()
-    engine = create_sqlite_engine(settings.database_path)
     try:
-        with httpx.Client(
-            timeout=settings.http_timeout_seconds,
-            headers={"User-Agent": USER_AGENT},
-            follow_redirects=True,
-        ) as client:
-            result = SyncExploited(
-                CisaKevCatalog(client), SqlAdvisoryStore(engine), now=lambda: datetime.now(UTC)
-            ).run()
+        settings = Settings()
+    except ValidationError as error:
+        typer.echo(f"KADOBAN_ で始まる環境変数の値が正しくない: {error}", err=True)
+        raise typer.Exit(1) from error
+    try:
+        engine = create_sqlite_engine(settings.database_path)
+        try:
+            with httpx.Client(
+                timeout=settings.http_timeout_seconds,
+                headers={"User-Agent": USER_AGENT},
+                follow_redirects=True,
+            ) as client:
+                result = SyncExploited(
+                    CisaKevCatalog(client), SqlAdvisoryStore(engine), now=lambda: datetime.now(UTC)
+                ).run()
+        finally:
+            engine.dispose()
     except AdvisorySourceError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
@@ -40,14 +48,12 @@ def sync_advisories() -> None:
             err=True,
         )
         raise typer.Exit(1) from error
-    finally:
-        engine.dispose()
-    match result.outcome:
-        case ExploitedSyncOutcome.REPLACED:
+    match result.replacement:
+        case CatalogReplacement.REPLACED:
             typer.echo(f"KEV: 版 {result.version} の {result.count:,} 件に入れ替えた")
-        case ExploitedSyncOutcome.UNCHANGED:
+        case CatalogReplacement.SAME_RELEASE:
             typer.echo(f"KEV: 版 {result.version} は取り込み済み")
-        case ExploitedSyncOutcome.OLDER_THAN_STORED:
+        case CatalogReplacement.OLDER_RELEASE:
             typer.echo(f"KEV: 取れた版 {result.version} は手元より古いので入れ替えなかった")
 
 

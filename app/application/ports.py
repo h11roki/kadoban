@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol
 
 from app.domain.exploited import ExploitedCatalog
@@ -12,13 +13,17 @@ class ReplicaError(Exception):
     pass
 
 
+class CatalogReplacement(StrEnum):
+    REPLACED = "replaced"
+    SAME_RELEASE = "same_release"
+    OLDER_RELEASE = "older_release"
+
+
 class ExploitedCatalogSource(Protocol):
     def fetch(self) -> ExploitedCatalog: ...
 
 
 class ExploitedCatalogStore(Protocol):
-    def exploited_catalog_released(self) -> datetime | None: ...
-
     def replace_exploited_catalog_if_newer(
         self, catalog: ExploitedCatalog, synced_at: datetime
-    ) -> bool: ...
+    ) -> CatalogReplacement: ...
