@@ -17,5 +17,6 @@ source_states = Table(
     metadata,
     Column("source", String, primary_key=True),
     Column("version", String, nullable=False),
+    Column("released_at", String, nullable=False),
     Column("synced_at", String, nullable=False),
 )

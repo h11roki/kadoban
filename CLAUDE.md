@@ -6,26 +6,26 @@
 
 - `uv sync`
 - `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`(CI と同じ。DB の結合テストは一時ディレクトリの SQLite に migration を流して使う)
-- `uv run alembic upgrade head` で DB を作る、または最新の形にする。DB は `DATA_DIR`(既定 `data`、git 管理外)の `kadoban.db`。表を変えたら `uv run alembic revision --autogenerate --rev-id <次の4桁> -m "<内容>"` で `migrations/versions/` に作る(ruff の hook で整形される)
-- `uv run python -m app.presentation.cli advisories sync` で CISA KEV を取り込む。版が手元と同じなら何もせず、違えば表をまるごと入れ替え、一覧が空なら入れ替えずに 1 で終わる(ADR 0004)。HTTP のタイムアウトは `HTTP_TIMEOUT_SECONDS`(既定 60)
+- `uv run alembic upgrade head` で DB を作る、または最新の形にする(`--sql` を付けると DB につながず SQL だけを出す)。DB は `KADOBAN_DATA_DIR`(既定 `data`、git 管理外)の `kadoban.db`。表を変えたら `uv run alembic revision --autogenerate --rev-id <次の4桁> -m "<内容>"` で `migrations/versions/` に作る(ruff の hook で整形される)
+- `uv run python -m app.presentation.cli advisories sync` で CISA KEV を取り込む。公開日時(`dateReleased`)が手元より新しければ表をまるごと入れ替え、同じなら何もせず、古ければ(CDN の古い写しなど)入れ替えない。一覧が空か、同じ CVE が 2 度載っていれば入れ替えずに 1 で終わる(ADR 0004)。HTTP のタイムアウトは `KADOBAN_HTTP_TIMEOUT_SECONDS`(既定 60)で、リダイレクトはたどる
 
 ## 構成と依存の向き
 
 `app` は4層。依存は presentation → application → domain の一方向で、infrastructure は application のポート(Protocol)を実装する。
 
 - domain: エンティティと純粋ロジック。標準ライブラリ以外を import しない
-- application: ユースケースとポート(`ports.py`)。ポートは差し替え先が実在するものだけ
+- application: ユースケースとポート(`ports.py`)。ポートは差し替え先が実在するものだけ(取り込み元と手元の DB。テストではフェイクに替える)
 - infrastructure: 脆弱性情報の取り込み、DB、LLM、メールの実装
 - presentation: CLI(`presentation/cli.py`、typer)。合成ルートとして infrastructure の実装を組み立て、application のポートの型として渡す
 
-設定は `app/settings.py`(pydantic-settings、環境変数から読む)。DB は SQLAlchemy Core の表(`infrastructure/db/tables.py`)と Alembic(`migrations/`)。取り込み元が失敗したか形が変わったときは、infrastructure が `AdvisorySourceError`(`application/ports.py`)に変えて投げ、CLI が文を出して 1 で終わる。
+設定は `app/settings.py`(pydantic-settings、頭に `KADOBAN_` の付いた環境変数から読む)。DB は SQLAlchemy Core の表(`infrastructure/db/tables.py`)と Alembic(`migrations/`)。取り込み元が失敗したか形が変わったときは infrastructure が、取り込み元が空の一覧を返したときはユースケースが `AdvisorySourceError` を投げる(空なら消さないのは取り込み元によらない決まりなので、ユースケースが確かめる)。手元の DB を読めないか書けないときは infrastructure が `ReplicaError` に変える。どちらも `application/ports.py` にあり、CLI が文を出して 1 で終わる。
 
 ## 決まっていること(詳細は ADR)
 
 - 登録した製品の該当判定から始め、LLM の前に評価基盤を作り、外から見える資産の発見は後で足す(ADR 0001)
 - 該当判定は該当 / 非該当 / 要確認の 3 つ。範囲が構造化されていて構成の条件が無いものはコードで決め(版が分からなければ要確認)、範囲が文だけのもの、版の読み替えが要るもの、構成の条件があるものを LLM が根拠つきで判定する。該当を非該当とする誤りを最も重くし、迷ったら要確認にする(ADR 0002)
 - 版の範囲は NVD、悪用の事実は CISA KEV から取り込み、手元の SQLite に写したものだけで照合する。日本語の情報はフェーズ 2 から JVN iPedia で取り、戻っていなければ JVN 本体を読む(ADR 0003)
-- NVD は年ごとの一括ファイルで全件を写し、毎日は更新分のファイルを入れる。CVE ごとに元の JSON を圧縮して持ち、NVD と採番機関の版の範囲を出どころつきで表に展開する。KEV は毎日取り、版が変われば表をまるごと入れ替える(ADR 0004)
+- NVD は年ごとの一括ファイルで全件を写し、毎日は更新分のファイルを入れる。CVE ごとに元の JSON を圧縮して持ち、NVD と採番機関の版の範囲を出どころつきで表に展開する。KEV は毎日取り、公開日時が新しければ表をまるごと入れ替える(ADR 0004)
 
 ## 進め方
 

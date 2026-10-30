@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import date
+from datetime import UTC, date, datetime
 
 import httpx
 import pytest
@@ -10,7 +10,7 @@ from app.domain.exploited import ExploitedCatalog, ExploitedVulnerability
 from app.infrastructure.kev import KEV_URL, CisaKevCatalog
 
 
-def entry(cve_id: str, ransomware: str) -> dict[str, object]:
+def entry(cve_id: str, ransomware: str = "Known") -> dict[str, object]:
     return {
         "cveID": cve_id,
         "vendorProject": "Fortinet",
@@ -21,6 +21,18 @@ def entry(cve_id: str, ransomware: str) -> dict[str, object]:
         "requiredAction": "Apply mitigations per vendor instructions.",
         "notes": "",
         "cwes": ["CWE-787"],
+    }
+
+
+def document(
+    *entries: dict[str, object], released: str = "2026-10-29T19:09:34.4003Z"
+) -> dict[str, object]:
+    return {
+        "title": "CISA Catalog of Known Exploited Vulnerabilities",
+        "catalogVersion": "2026.10.29",
+        "dateReleased": released,
+        "count": len(entries),
+        "vulnerabilities": list(entries),
     }
 
 
@@ -35,21 +47,13 @@ def fetch() -> ExploitedCatalog:
         return CisaKevCatalog(client).fetch()
 
 
-def test_the_catalog_is_read_with_its_version_dates_and_ransomware_use(kev: respx.Route) -> None:
-    kev.respond(
-        json={
-            "catalogVersion": "2026.10.29",
-            "count": 2,
-            "vulnerabilities": [
-                entry("CVE-2024-21762", "Known"),
-                entry("CVE-2099-0001", "Unknown"),
-            ],
-        }
-    )
+def test_the_catalog_is_read_with_its_release_dates_and_ransomware_use(kev: respx.Route) -> None:
+    kev.respond(json=document(entry("CVE-2024-21762", "Known"), entry("CVE-2099-0001", "Unknown")))
 
     catalog = fetch()
 
     assert catalog.version == "2026.10.29"
+    assert catalog.released == datetime(2026, 10, 29, 19, 9, 34, 400300, tzinfo=UTC)
     assert catalog.vulnerabilities == (
         ExploitedVulnerability(
             cve_id="CVE-2024-21762",
@@ -76,18 +80,32 @@ def test_a_server_error_is_a_source_error(kev: respx.Route) -> None:
 
 
 def test_an_unknown_ransomware_value_is_a_changed_format(kev: respx.Route) -> None:
-    kev.respond(json={"catalogVersion": "x", "vulnerabilities": [entry("CVE-1", "Maybe")]})
+    kev.respond(json=document(entry("CVE-1", "Maybe")))
 
     with pytest.raises(AdvisorySourceError, match="形が変わっている"):
         fetch()
 
 
 def test_a_missing_field_is_a_changed_format(kev: respx.Route) -> None:
-    broken = entry("CVE-1", "Known")
+    broken = entry("CVE-1")
     del broken["dueDate"]
-    kev.respond(json={"catalogVersion": "x", "vulnerabilities": [broken]})
+    kev.respond(json=document(broken))
 
     with pytest.raises(AdvisorySourceError, match="形が変わっている"):
+        fetch()
+
+
+def test_a_release_time_without_a_time_zone_is_a_changed_format(kev: respx.Route) -> None:
+    kev.respond(json=document(entry("CVE-1"), released="2026-10-29T19:09:34"))
+
+    with pytest.raises(AdvisorySourceError, match="形が変わっている"):
+        fetch()
+
+
+def test_a_cve_listed_twice_is_a_changed_format(kev: respx.Route) -> None:
+    kev.respond(json=document(entry("CVE-2024-21762"), entry("CVE-2024-21762")))
+
+    with pytest.raises(AdvisorySourceError, match="2 度以上"):
         fetch()
 
 
