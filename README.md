@@ -6,7 +6,7 @@
 
 ## 状態
 
-フェーズ 1(製品台帳と脆弱性情報)の途中。CISA KEV と NVD の全件を手元の SQLite に取り込める。
+フェーズ 1(製品台帳と脆弱性情報)の途中。CISA KEV と NVD の全件を手元の SQLite に取り込み、使っている製品を会社ごとの台帳に載せられる。
 
 ## 使い方
 
@@ -14,6 +14,10 @@
 uv sync
 uv run alembic upgrade head
 uv run python -m app.presentation.cli advisories sync
+uv run python -m app.presentation.cli product search FortiGate
+uv run python -m app.presentation.cli product add --company 山田製作所 --label "本社の FortiGate" \
+  --key fortinet/fortios --key fortinet/fortinetfortios --version 7.0.12 --role vpn
+uv run python -m app.presentation.cli product list --company 山田製作所
 ```
 
 DB はリポジトリ直下の `data/kadoban.db` にでき、NVD の一括ファイルは `data/nvd/` に取る。置き場は環境変数 `KADOBAN_DATA_DIR` で変えられる。初回は NVD の全件を取るので時間がかかり、2 回目からは 7 日以内なら更新分だけを取る。途中で止めても、次は続きから取る。

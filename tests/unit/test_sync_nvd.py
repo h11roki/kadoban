@@ -1,4 +1,4 @@
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -8,10 +8,12 @@ from app.application.ports import (
     AdvisoryRecord,
     AdvisorySourceError,
     NvdSyncKind,
+    ReplicaError,
     UnreadableRecord,
 )
 from app.application.sync_nvd import NvdFeedSyncResult, SyncNvd
 from app.domain.advisory import Advisory
+from app.domain.product import IndexedName, NameKey
 
 NOW = datetime(2026, 10, 30, 9, 0, tzinfo=UTC)
 FEED_2002 = datetime(2026, 10, 29, 7, tzinfo=UTC)
@@ -77,6 +79,20 @@ class CountingStore:
         self.recorded.append((kind, released, synced_at))
 
 
+@dataclass
+class CountingIndex:
+    rebuilds: int = 0
+
+    def search(self, query_key: str, limit: int) -> list[IndexedName]:
+        return []
+
+    def cve_counts(self, keys: Collection[NameKey]) -> dict[NameKey, int]:
+        return {}
+
+    def rebuild(self) -> None:
+        self.rebuilds += 1
+
+
 def source() -> ListedSource:
     return ListedSource(
         yearly=[
@@ -87,9 +103,14 @@ def source() -> ListedSource:
     )
 
 
-def sync(feeds: ListedSource, store: CountingStore) -> tuple[SyncNvd, list[NvdFeedSyncResult]]:
+def sync(
+    feeds: ListedSource, store: CountingStore, index: CountingIndex | None = None
+) -> tuple[SyncNvd, list[NvdFeedSyncResult]]:
     reported: list[NvdFeedSyncResult] = []
-    return SyncNvd(feeds, store, now=lambda: NOW, on_feed=reported.append), reported
+    sync_nvd = SyncNvd(
+        feeds, store, index or CountingIndex(), now=lambda: NOW, on_feed=reported.append
+    )
+    return sync_nvd, reported
 
 
 @pytest.mark.parametrize("released_at", [None, NOW - timedelta(days=7, seconds=1)])
@@ -122,7 +143,8 @@ def test_a_full_sync_is_as_fresh_as_its_newest_feed() -> None:
 def test_only_recent_changes_are_read_while_the_copy_is_within_seven_days() -> None:
     feeds = source()
     store = CountingStore(NOW - timedelta(days=7))
-    sync_nvd, reported = sync(feeds, store)
+    index = CountingIndex()
+    sync_nvd, reported = sync(feeds, store, index)
 
     kind = sync_nvd.run()
 
@@ -130,6 +152,7 @@ def test_only_recent_changes_are_read_while_the_copy_is_within_seven_days() -> N
     assert kind is NvdSyncKind.RECENT_CHANGES
     assert reported == [NvdFeedSyncResult("modified", 1, 1, ())]
     assert store.recorded == [(NvdSyncKind.RECENT_CHANGES, FEED_MODIFIED, NOW)]
+    assert index.rebuilds == 1
 
 
 def test_records_are_written_in_batches_and_unchanged_ones_are_not_counted() -> None:
@@ -177,9 +200,86 @@ def test_many_unreadable_records_mean_the_format_changed_and_the_sync_stops() ->
         unreadable(number) for number in range(21)
     ]
     store = CountingStore(NOW - timedelta(days=1))
-    sync_nvd, _ = sync(feeds, store)
+    index = CountingIndex()
+    sync_nvd, _ = sync(feeds, store, index)
 
     with pytest.raises(AdvisorySourceError, match="21 / 2,000 件が読めず"):
         sync_nvd.run()
 
     assert store.recorded == []
+    assert index.rebuilds == 1
+
+
+def test_the_product_index_is_not_rebuilt_when_nothing_was_written() -> None:
+    feeds = source()
+    store = CountingStore(NOW - timedelta(days=1), already_stored=1)
+    index = CountingIndex()
+    sync_nvd, _ = sync(feeds, store, index)
+
+    sync_nvd.run()
+
+    assert (len(store.recorded), index.rebuilds) == (1, 0)
+
+
+class FailingFeed(ListedFeed):
+    def records(self) -> Iterator[AdvisoryRecord | UnreadableRecord]:
+        yield from self.items
+        raise AdvisorySourceError("つながりが切れた")
+
+
+def test_records_written_before_a_feed_breaks_still_rebuild_the_index() -> None:
+    feeds = source()
+    feeds.recent = FailingFeed("modified", FEED_MODIFIED, [record(n) for n in range(500)])
+    store = CountingStore(NOW - timedelta(days=1))
+    index = CountingIndex()
+    sync_nvd, _ = sync(feeds, store, index)
+
+    with pytest.raises(AdvisorySourceError, match="切れた"):
+        sync_nvd.run()
+
+    assert (store.batches, index.rebuilds, store.recorded) == ([500], 1, [])
+
+
+class BrokenIndex(CountingIndex):
+    def rebuild(self) -> None:
+        raise ReplicaError("索引に書けない")
+
+
+def test_a_failed_rebuild_is_noted_on_the_original_error() -> None:
+    feeds = source()
+    feeds.recent = FailingFeed("modified", FEED_MODIFIED, [record(n) for n in range(500)])
+    sync_nvd, _ = sync(feeds, CountingStore(NOW - timedelta(days=1)), BrokenIndex())
+
+    with pytest.raises(AdvisorySourceError) as raised:
+        sync_nvd.run()
+
+    assert raised.value.__notes__ == ["製品名の索引も作り直せなかった: 索引に書けない"]
+
+
+def test_the_freshness_is_recorded_even_when_the_index_cannot_be_rebuilt() -> None:
+    store = CountingStore(NOW - timedelta(days=1))
+    sync_nvd, _ = sync(source(), store, BrokenIndex())
+
+    with pytest.raises(ReplicaError, match="索引に書けない"):
+        sync_nvd.run()
+
+    assert store.recorded == [(NvdSyncKind.RECENT_CHANGES, FEED_MODIFIED, NOW)]
+
+
+class StoreThatFillsUp(CountingStore):
+    def write_advisories(self, records: Sequence[AdvisoryRecord]) -> int:
+        if self.batches:
+            raise ReplicaError("置き場がいっぱい")
+        return super().write_advisories(records)
+
+
+def test_the_index_is_left_alone_when_the_replica_itself_failed() -> None:
+    feeds = source()
+    feeds.recent.items = [record(number) for number in range(600)]
+    index = CountingIndex()
+    sync_nvd, _ = sync(feeds, StoreThatFillsUp(NOW - timedelta(days=1)), index)
+
+    with pytest.raises(ReplicaError, match="いっぱい"):
+        sync_nvd.run()
+
+    assert index.rebuilds == 0
