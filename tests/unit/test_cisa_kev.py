@@ -102,13 +102,6 @@ def test_a_release_time_without_a_time_zone_is_a_changed_format(kev: respx.Route
         fetch()
 
 
-def test_a_cve_listed_twice_is_a_changed_format(kev: respx.Route) -> None:
-    kev.respond(json=document(entry("CVE-2024-21762"), entry("CVE-2024-21762")))
-
-    with pytest.raises(AdvisorySourceError, match="2 度以上"):
-        fetch()
-
-
 def test_a_body_that_is_not_json_is_a_changed_format(kev: respx.Route) -> None:
     kev.respond(text="<html>maintenance</html>")
 

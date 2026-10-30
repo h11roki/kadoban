@@ -31,7 +31,7 @@ def sync_advisories() -> None:
                 CisaKevCatalog(client), SqlAdvisoryStore(engine), now=lambda: datetime.now(UTC)
             ).run()
     except AdvisorySourceError as error:
-        typer.echo(f"KEV を取り込めなかった: {error}", err=True)
+        typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     except ReplicaError as error:
         typer.echo(

@@ -16,7 +16,7 @@ uv run alembic upgrade head
 uv run python -m app.presentation.cli advisories sync
 ```
 
-DB は `data/kadoban.db` にできる。置き場は環境変数 `KADOBAN_DATA_DIR` で変えられる。
+DB はリポジトリ直下の `data/kadoban.db` にできる。置き場は環境変数 `KADOBAN_DATA_DIR` で変えられる。
 
 ## 開発
 

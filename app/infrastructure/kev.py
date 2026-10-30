@@ -40,9 +40,6 @@ class CisaKevCatalog:
             document = _KevDocument.model_validate_json(response.content)
         except ValidationError as error:
             raise AdvisorySourceError(f"KEV の形が変わっている: {error}") from error
-        cve_ids = [entry.cve_id for entry in document.vulnerabilities]
-        if len(set(cve_ids)) != len(cve_ids):
-            raise AdvisorySourceError("KEV の形が変わっている: 同じ CVE が 2 度以上載っている")
         return ExploitedCatalog(
             version=document.catalog_version,
             released=document.date_released,

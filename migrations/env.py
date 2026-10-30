@@ -8,7 +8,7 @@ from app.infrastructure.db.tables import metadata
 from app.settings import Settings
 
 config = context.config
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 database_path: Path = config.attributes.get("database_path") or Settings().database_path
