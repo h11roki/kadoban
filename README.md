@@ -6,13 +6,22 @@
 
 ## 状態
 
-フェーズ 0(方針の ADR)。コードはまだ無い。
+フェーズ 1(製品台帳と脆弱性情報)の途中。CISA KEV を手元の SQLite に取り込める。
+
+## 使い方
+
+```sh
+uv sync
+uv run alembic upgrade head
+uv run python -m app.presentation.cli advisories sync
+```
+
+DB はリポジトリ直下の `data/kadoban.db` にできる。置き場は環境変数 `KADOBAN_DATA_DIR` で変えられる。
 
 ## 開発
 
 - Python 3.13 と uv を使う
-- `uv sync` で依存を入れる
-- `uv run ruff check . && uv run ruff format --check . && uv run mypy` で CI と同じ確認をする
+- `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest` で CI と同じ確認をする
 
 ## 開発ルール
 
