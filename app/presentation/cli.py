@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from functools import partial
 
@@ -17,6 +18,7 @@ from app.infrastructure.db.advisory_store import SqlAdvisoryStore
 from app.infrastructure.db.engine import create_sqlite_engine
 from app.infrastructure.kev import CisaKevCatalog
 from app.infrastructure.nvd_feeds import NvdFeedFiles
+from app.infrastructure.sync_lock import exclusive_sync
 from app.settings import Settings
 
 USER_AGENT = "kadoban (+https://github.com/h11roki/kadoban)"
@@ -47,40 +49,42 @@ def sync_advisories() -> None:
     now = partial(datetime.now, UTC)
     source_failed = False
     try:
-        engine = create_sqlite_engine(settings.database_path)
-        store = SqlAdvisoryStore(engine)
-        try:
-            with httpx.Client(
-                timeout=settings.http_timeout_seconds,
-                headers={"User-Agent": USER_AGENT},
-                follow_redirects=True,
-            ) as client:
-                try:
-                    kev = SyncExploited(CisaKevCatalog(client), store, now=now).run()
-                except AdvisorySourceError as error:
-                    typer.echo(str(error), err=True)
-                    source_failed = True
-                else:
-                    match kev.replacement:
-                        case CatalogReplacement.REPLACED:
-                            typer.echo(f"KEV: 版 {kev.version} の {kev.count:,} 件に入れ替えた")
-                        case CatalogReplacement.SAME_RELEASE:
-                            typer.echo(f"KEV: 版 {kev.version} は取り込み済み")
-                        case CatalogReplacement.OLDER_RELEASE:
-                            typer.echo(
-                                f"KEV: 取れた版 {kev.version} は手元より古いので入れ替えなかった"
-                            )
-                feeds = NvdFeedFiles(client, settings.nvd_feed_dir, this_year=now().year)
-                try:
-                    nvd = SyncNvd(feeds, store, now=now, on_feed=echo_nvd_feed).run()
-                except AdvisorySourceError as error:
-                    typer.echo(str(error), err=True)
-                    source_failed = True
-                else:
-                    scope = "全件" if nvd.kind is NvdSyncKind.ALL else "直近 8 日の更新分"
-                    typer.echo(f"NVD: {scope}を取り込んだ")
-        finally:
-            engine.dispose()
+        with ExitStack() as resources:
+            resources.enter_context(exclusive_sync(settings.data_dir.resolve()))
+            engine = create_sqlite_engine(settings.database_path)
+            resources.callback(engine.dispose)
+            client = resources.enter_context(
+                httpx.Client(
+                    timeout=settings.http_timeout_seconds,
+                    headers={"User-Agent": USER_AGENT},
+                    follow_redirects=True,
+                )
+            )
+            store = SqlAdvisoryStore(engine)
+            try:
+                kev = SyncExploited(CisaKevCatalog(client), store, now=now).run()
+            except AdvisorySourceError as error:
+                typer.echo(str(error), err=True)
+                source_failed = True
+            else:
+                match kev.replacement:
+                    case CatalogReplacement.REPLACED:
+                        typer.echo(f"KEV: 版 {kev.version} の {kev.count:,} 件に入れ替えた")
+                    case CatalogReplacement.SAME_RELEASE:
+                        typer.echo(f"KEV: 版 {kev.version} は取り込み済み")
+                    case CatalogReplacement.OLDER_RELEASE:
+                        typer.echo(
+                            f"KEV: 取れた版 {kev.version} は手元より古いので入れ替えなかった"
+                        )
+            feeds = NvdFeedFiles(client, settings.nvd_feed_dir, this_year=now().year)
+            try:
+                nvd = SyncNvd(feeds, store, now=now, on_feed=echo_nvd_feed).run()
+            except AdvisorySourceError as error:
+                typer.echo(str(error), err=True)
+                source_failed = True
+            else:
+                scope = "全件" if nvd.kind is NvdSyncKind.ALL else "直近 8 日の更新分"
+                typer.echo(f"NVD: {scope}を取り込んだ")
     except ReplicaError as error:
         typer.echo(
             f"{error}\n`uv run alembic upgrade head` を流したか、"

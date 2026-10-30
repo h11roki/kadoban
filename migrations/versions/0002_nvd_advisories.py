@@ -56,8 +56,17 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f("ix_nvd_ranges_cve_id"), ["cve_id"], unique=False)
         batch_op.create_index("ix_nvd_ranges_vendor_product", ["vendor", "product"], unique=False)
 
+    op.create_table(
+        "unreadable_cves",
+        sa.Column("cve_id", sa.String(), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("seen_at", sa.String(), nullable=False),
+        sa.PrimaryKeyConstraint("cve_id"),
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("unreadable_cves")
     with op.batch_alter_table("nvd_ranges", schema=None) as batch_op:
         batch_op.drop_index("ix_nvd_ranges_vendor_product")
         batch_op.drop_index(batch_op.f("ix_nvd_ranges_cve_id"))

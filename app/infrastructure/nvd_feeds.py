@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 import ijson
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.application.ports import (
     AdvisoryRecord,
@@ -28,11 +28,7 @@ CPE_FIELDS = 13
 REASON_LENGTH = 300
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class _CpeMatch(_Model):
+class _CpeMatch(BaseModel):
     vulnerable: bool
     criteria: str
     start_including: str | None = Field(None, alias="versionStartIncluding")
@@ -41,13 +37,13 @@ class _CpeMatch(_Model):
     end_excluding: str | None = Field(None, alias="versionEndExcluding")
 
 
-class _Node(_Model):
+class _Node(BaseModel):
     operator: str | None = None
     negate: bool = False
     cpe_match: list[_CpeMatch] = Field(default_factory=list, alias="cpeMatch")
 
 
-class _Configuration(_Model):
+class _Configuration(BaseModel):
     operator: str | None = None
     nodes: list[_Node]
 
@@ -58,7 +54,7 @@ class _Configuration(_Model):
         )
 
 
-class _AffectedVersion(_Model):
+class _AffectedVersion(BaseModel):
     version: str | None = None
     status: str | None = None
     less_than: str | None = Field(None, alias="lessThan")
@@ -66,7 +62,7 @@ class _AffectedVersion(_Model):
     version_type: str | None = Field(None, alias="versionType")
 
 
-class _AffectedData(_Model):
+class _AffectedData(BaseModel):
     vendor: str | None = None
     product: str | None = None
     package_name: str | None = Field(None, alias="packageName")
@@ -74,11 +70,11 @@ class _AffectedData(_Model):
     versions: list[_AffectedVersion] = Field(default_factory=list)
 
 
-class _Affected(_Model):
+class _Affected(BaseModel):
     affected_data: list[_AffectedData] = Field(default_factory=list, alias="affectedData")
 
 
-class _Cve(_Model):
+class _Cve(BaseModel):
     id: str
     published: datetime
     last_modified: datetime = Field(alias="lastModified")
@@ -92,6 +88,10 @@ class _Meta:
     last_modified: datetime
     sha256: str
     gz_size: int
+
+    def __post_init__(self) -> None:
+        if self.last_modified.tzinfo is None:
+            raise ValueError("lastModifiedDate にタイムゾーンが無い")
 
 
 @dataclass(frozen=True)

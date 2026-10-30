@@ -4,10 +4,16 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Engine, select
 
-from app.application.ports import AdvisoryRecord, NvdSyncKind
+from app.application.ports import AdvisoryRecord, NvdSyncKind, UnreadableRecord
 from app.domain.advisory import Advisory, CnaRange, NvdRange
 from app.infrastructure.db.advisory_store import SqlAdvisoryStore
-from app.infrastructure.db.tables import cna_ranges, cves, nvd_ranges, source_states
+from app.infrastructure.db.tables import (
+    cna_ranges,
+    cves,
+    nvd_ranges,
+    source_states,
+    unreadable_cves,
+)
 
 PUBLISHED = datetime(2024, 2, 9, 9, 15, tzinfo=UTC)
 MONDAY = datetime(2026, 10, 26, 12, 0, tzinfo=UTC)
@@ -140,3 +146,35 @@ def test_the_freshness_of_the_nvd_copy_is_recorded_and_read_back(engine: Engine)
         ).one()
     assert store.nvd_released_at() == MONDAY
     assert state.version == "recent_changes"
+
+
+def test_an_older_feed_does_not_move_the_freshness_of_the_copy_back(engine: Engine) -> None:
+    store = SqlAdvisoryStore(engine)
+    store.record_nvd_sync(NvdSyncKind.RECENT_CHANGES, released=TUESDAY, synced_at=TUESDAY)
+
+    store.record_nvd_sync(NvdSyncKind.ALL, released=MONDAY, synced_at=TUESDAY)
+
+    assert store.nvd_released_at() == TUESDAY
+
+
+def unreadable_ids(engine: Engine) -> list[str]:
+    with engine.connect() as connection:
+        return list(connection.scalars(select(unreadable_cves.c.cve_id)))
+
+
+def test_unreadable_cves_are_kept_until_a_readable_version_replaces_them(engine: Engine) -> None:
+    store = SqlAdvisoryStore(engine)
+    store.write_advisories([record("CVE-2024-21762", MONDAY)])
+
+    store.record_unreadable(
+        [
+            UnreadableRecord("CVE-2024-21762", "CPE の形が変わっている"),
+            UnreadableRecord(None, "id が無い"),
+            UnreadableRecord("CVE-2024-21762", "2 度目"),
+        ],
+        seen_at=TUESDAY,
+    )
+    assert unreadable_ids(engine) == ["CVE-2024-21762"]
+
+    store.write_advisories([record("CVE-2024-21762", TUESDAY)])
+    assert unreadable_ids(engine) == []

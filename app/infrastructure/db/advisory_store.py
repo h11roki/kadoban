@@ -3,11 +3,17 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, Connection, Engine, delete, insert, select
+from sqlalchemy import Connection, Engine, delete, insert, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError
 
-from app.application.ports import AdvisoryRecord, CatalogReplacement, NvdSyncKind, ReplicaError
+from app.application.ports import (
+    AdvisoryRecord,
+    CatalogReplacement,
+    NvdSyncKind,
+    ReplicaError,
+    UnreadableRecord,
+)
 from app.domain.exploited import ExploitedCatalog
 from app.infrastructure.db.engine import TAKE_WRITE_LOCK
 from app.infrastructure.db.tables import (
@@ -16,6 +22,7 @@ from app.infrastructure.db.tables import (
     exploited_vulnerabilities,
     nvd_ranges,
     source_states,
+    unreadable_cves,
 )
 
 KEV_SOURCE = "kev"
@@ -32,7 +39,7 @@ class SqlAdvisoryStore:
     ) -> CatalogReplacement:
         try:
             with self._writer.begin() as connection:
-                stored = _stored_time(connection, KEV_SOURCE, source_states.c.released_at)
+                stored = _stored_release(connection, KEV_SOURCE)
                 if stored == catalog.released:
                     return CatalogReplacement.SAME_RELEASE
                 if stored is not None and stored > catalog.released:
@@ -50,7 +57,7 @@ class SqlAdvisoryStore:
     def nvd_released_at(self) -> datetime | None:
         try:
             with self._engine.connect() as connection:
-                return _stored_time(connection, NVD_SOURCE, source_states.c.released_at)
+                return _stored_release(connection, NVD_SOURCE)
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB を読めない: {error.orig}") from error
 
@@ -77,7 +84,7 @@ class SqlAdvisoryStore:
                 if not fresh:
                     return 0
                 fresh_ids = [record.advisory.cve_id for record in fresh]
-                for table in (cves, nvd_ranges, cna_ranges):
+                for table in (cves, nvd_ranges, cna_ranges, unreadable_cves):
                     connection.execute(delete(table).where(table.c.cve_id.in_(fresh_ids)))
                 connection.execute(
                     insert(cves),
@@ -110,10 +117,40 @@ class SqlAdvisoryStore:
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
 
+    def record_unreadable(self, records: Sequence[UnreadableRecord], seen_at: datetime) -> None:
+        rows = {
+            record.cve_id: {
+                "cve_id": record.cve_id,
+                "reason": record.reason,
+                "seen_at": _timestamp(seen_at),
+            }
+            for record in records
+            if record.cve_id is not None
+        }
+        if not rows:
+            return
+        try:
+            with self._writer.begin() as connection:
+                statement = sqlite_insert(unreadable_cves)
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[unreadable_cves.c.cve_id],
+                        set_={
+                            "reason": statement.excluded.reason,
+                            "seen_at": statement.excluded.seen_at,
+                        },
+                    ),
+                    list(rows.values()),
+                )
+        except DBAPIError as error:
+            raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
+
     def record_nvd_sync(self, kind: NvdSyncKind, released: datetime, synced_at: datetime) -> None:
         try:
             with self._writer.begin() as connection:
-                _record_state(connection, NVD_SOURCE, kind.value, released, synced_at)
+                stored = _stored_release(connection, NVD_SOURCE)
+                newest = released if stored is None else max(stored, released)
+                _record_state(connection, NVD_SOURCE, kind.value, newest, synced_at)
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
 
@@ -122,18 +159,18 @@ def _timestamp(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
 
 
-def _stored_time(connection: Connection, source: str, column: Column[str]) -> datetime | None:
-    text = connection.scalar(select(column).where(source_states.c.source == source))
+def _stored_release(connection: Connection, source: str) -> datetime | None:
+    text = connection.scalar(
+        select(source_states.c.released_at).where(source_states.c.source == source)
+    )
     if text is None:
         return None
     try:
         moment = datetime.fromisoformat(text)
     except ValueError as error:
-        raise ReplicaError(
-            f"手元の DB の {source} の {column.name} が読めない: {text!r}"
-        ) from error
+        raise ReplicaError(f"手元の DB の {source} の公開日時が読めない: {text!r}") from error
     if moment.tzinfo is None:
-        raise ReplicaError(f"手元の DB の {source} の {column.name} にタイムゾーンが無い: {text!r}")
+        raise ReplicaError(f"手元の DB の {source} の公開日時にタイムゾーンが無い: {text!r}")
     return moment
 
 

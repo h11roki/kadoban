@@ -60,6 +60,7 @@ class CountingStore:
     released_at: datetime | None
     already_stored: int = 0
     batches: list[int] = field(default_factory=list)
+    unreadable: list[tuple[UnreadableRecord, datetime]] = field(default_factory=list)
     recorded: list[tuple[NvdSyncKind, datetime, datetime]] = field(default_factory=list)
 
     def nvd_released_at(self) -> datetime | None:
@@ -68,6 +69,9 @@ class CountingStore:
     def write_advisories(self, records: Sequence[AdvisoryRecord]) -> int:
         self.batches.append(len(records))
         return len(records) - self.already_stored
+
+    def record_unreadable(self, records: Sequence[UnreadableRecord], seen_at: datetime) -> None:
+        self.unreadable += [(record, seen_at) for record in records]
 
     def record_nvd_sync(self, kind: NvdSyncKind, released: datetime, synced_at: datetime) -> None:
         self.recorded.append((kind, released, synced_at))
@@ -128,18 +132,6 @@ def test_only_recent_changes_are_read_while_the_copy_is_within_seven_days() -> N
     assert store.recorded == [(NvdSyncKind.RECENT_CHANGES, FEED_MODIFIED, NOW)]
 
 
-def test_a_stale_recent_changes_feed_does_not_move_the_copy_back() -> None:
-    feeds = source()
-    stored = NOW - timedelta(days=1)
-    feeds.recent.last_modified = NOW - timedelta(days=3)
-    store = CountingStore(stored)
-    sync_nvd, _ = sync(feeds, store)
-
-    sync_nvd.run()
-
-    assert store.recorded == [(NvdSyncKind.RECENT_CHANGES, stored, NOW)]
-
-
 def test_records_are_written_in_batches_and_unchanged_ones_are_not_counted() -> None:
     feeds = source()
     feeds.recent.items = [record(number) for number in range(2_500)]
@@ -152,7 +144,7 @@ def test_records_are_written_in_batches_and_unchanged_ones_are_not_counted() -> 
     assert reported == [NvdFeedSyncResult("modified", 2_500, 2_200, ())]
 
 
-def test_a_few_unreadable_records_are_skipped_and_reported() -> None:
+def test_unreadable_records_are_skipped_kept_in_the_store_and_reported() -> None:
     feeds = source()
     feeds.recent.items = [record(number) for number in range(200)] + [unreadable(1)]
     store = CountingStore(NOW - timedelta(days=1))
@@ -161,17 +153,33 @@ def test_a_few_unreadable_records_are_skipped_and_reported() -> None:
     sync_nvd.run()
 
     assert store.batches == [200]
+    assert store.unreadable == [(unreadable(1), NOW)]
     assert reported == [NvdFeedSyncResult("modified", 201, 200, (unreadable(1),))]
+    assert len(store.recorded) == 1
+
+
+def test_a_small_feed_tolerates_a_handful_of_unreadable_records() -> None:
+    feeds = source()
+    feeds.recent.items = [record(number) for number in range(296)] + [
+        unreadable(number) for number in range(4)
+    ]
+    store = CountingStore(NOW - timedelta(days=1))
+    sync_nvd, _ = sync(feeds, store)
+
+    sync_nvd.run()
+
     assert len(store.recorded) == 1
 
 
 def test_many_unreadable_records_mean_the_format_changed_and_the_sync_stops() -> None:
     feeds = source()
-    feeds.recent.items = [record(number) for number in range(98)] + [unreadable(1), unreadable(2)]
+    feeds.recent.items = [record(number) for number in range(1_979)] + [
+        unreadable(number) for number in range(21)
+    ]
     store = CountingStore(NOW - timedelta(days=1))
     sync_nvd, _ = sync(feeds, store)
 
-    with pytest.raises(AdvisorySourceError, match="2 / 100 件が読めず"):
+    with pytest.raises(AdvisorySourceError, match="21 / 2,000 件が読めず"):
         sync_nvd.run()
 
     assert store.recorded == []

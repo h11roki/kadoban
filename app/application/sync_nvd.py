@@ -14,6 +14,7 @@ from app.application.ports import (
 
 ALL_FEEDS_AFTER = timedelta(days=7)
 UNREADABLE_SHARE_LIMIT = 0.01
+UNREADABLE_COUNT_FLOOR = 20
 WRITE_BATCH = 1_000
 
 
@@ -61,10 +62,13 @@ class SyncNvd:
             for batch in batched(feed.records(), WRITE_BATCH, strict=False):
                 read += len(batch)
                 readable = [record for record in batch if isinstance(record, AdvisoryRecord)]
-                unreadable += [record for record in batch if isinstance(record, UnreadableRecord)]
+                skipped = [record for record in batch if isinstance(record, UnreadableRecord)]
                 if readable:
                     written += self._store.write_advisories(readable)
-            if len(unreadable) > read * UNREADABLE_SHARE_LIMIT:
+                if skipped:
+                    self._store.record_unreadable(skipped, seen_at=started)
+                    unreadable += skipped
+            if len(unreadable) > max(UNREADABLE_COUNT_FLOOR, read * UNREADABLE_SHARE_LIMIT):
                 raise AdvisorySourceError(
                     f"NVD の {feed.name} の {len(unreadable):,} / {read:,} 件が読めず、"
                     f"形が変わっているので止める。最初の理由: {unreadable[0].reason}"
@@ -74,6 +78,5 @@ class SyncNvd:
             results.append(result)
             covered = feed.last_modified if covered is None else min(covered, feed.last_modified)
         if covered is not None:
-            newest = covered if released is None else max(covered, released)
-            self._store.record_nvd_sync(kind, released=newest, synced_at=started)
+            self._store.record_nvd_sync(kind, released=covered, synced_at=started)
         return NvdSyncResult(kind, tuple(results))

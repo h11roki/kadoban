@@ -347,3 +347,14 @@ def test_a_missing_past_year_is_an_error(tmp_path: Path, nvd: respx.MockRouter) 
 
     with pytest.raises(AdvisorySourceError, match="2002 年の一括ファイルが無い"):
         list(feeds(tmp_path, this_year=2003).all_feeds())
+
+
+def test_a_meta_time_without_a_time_zone_is_a_changed_format(
+    tmp_path: Path, nvd: respx.MockRouter
+) -> None:
+    nvd.get(f"{FEED_BASE_URL}modified.meta").respond(
+        text="lastModifiedDate:2026-10-29T03:01:50\r\ngzSize:1\r\nsha256:00\r\n"
+    )
+
+    with pytest.raises(AdvisorySourceError, match=".meta の形が変わっている"):
+        feeds(tmp_path).recent_changes()

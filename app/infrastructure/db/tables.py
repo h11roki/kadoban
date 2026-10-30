@@ -58,6 +58,14 @@ nvd_ranges = Table(
     Index("ix_nvd_ranges_vendor_product", "vendor", "product"),
 )
 
+unreadable_cves = Table(
+    "unreadable_cves",
+    metadata,
+    Column("cve_id", String, primary_key=True),
+    Column("reason", Text, nullable=False),
+    Column("seen_at", String, nullable=False),
+)
+
 cna_ranges = Table(
     "cna_ranges",
     metadata,
