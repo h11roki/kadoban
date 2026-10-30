@@ -16,3 +16,7 @@ class Settings(BaseSettings):
     @property
     def database_path(self) -> Path:
         return self.data_dir / "kadoban.db"
+
+    @property
+    def nvd_feed_dir(self) -> Path:
+        return self.data_dir.resolve() / "nvd"

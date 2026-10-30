@@ -1,10 +1,7 @@
-from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import Engine, select, update
 
 from app.application.ports import CatalogReplacement, ReplicaError
@@ -13,7 +10,6 @@ from app.infrastructure.db.advisory_store import SqlAdvisoryStore
 from app.infrastructure.db.engine import create_sqlite_engine
 from app.infrastructure.db.tables import exploited_vulnerabilities, source_states
 
-ROOT = Path(__file__).resolve().parents[2]
 RELEASED_28 = datetime(2026, 10, 28, 19, 0, tzinfo=UTC)
 RELEASED_29 = datetime(2026, 10, 29, 19, 9, 34, 400300, tzinfo=UTC)
 SYNCED = datetime(2026, 10, 30, 9, 0, tzinfo=UTC)
@@ -31,18 +27,6 @@ def exploited(cve_id: str) -> ExploitedVulnerability:
 
 def catalog(released: datetime, *cve_ids: str) -> ExploitedCatalog:
     return ExploitedCatalog(released.date().isoformat(), released, tuple(map(exploited, cve_ids)))
-
-
-@pytest.fixture
-def engine(tmp_path: Path) -> Iterator[Engine]:
-    database_path = tmp_path / "kadoban.db"
-    config = Config(ROOT / "alembic.ini")
-    config.attributes["database_path"] = database_path
-    config.attributes["configure_logger"] = False
-    command.upgrade(config, "head")
-    engine = create_sqlite_engine(database_path)
-    yield engine
-    engine.dispose()
 
 
 def stored(engine: Engine) -> tuple[list[str], str | None]:
