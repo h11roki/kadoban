@@ -4,34 +4,48 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-NOT_IN_A_KEY = re.compile(r"[^0-9a-z぀-ヿ一-鿿]")
-KEY_WORD = re.compile(r"[0-9a-z぀-ヿ一-鿿]+")
+KEY_CHARACTERS = r"0-9a-z\u3005\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u4e00-\u9fff"
+NOT_IN_A_KEY = re.compile(f"[^{KEY_CHARACTERS}]")
+KEY_WORD = re.compile(f"[{KEY_CHARACTERS}]+")
+SPACE_BEFORE_SOUND_MARK = re.compile(r"\s+(?=[\u3099\u309a])")
 ASCII_WORD = re.compile(r"[0-9a-z]+")
 SPACES = re.compile(r"\s+")
 LEGAL_FORMS = frozenset(
     {"inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited", "llc"}
-    | {"plc", "gmbh", "ag", "sa", "kk", "株式会社", "有限会社"}
+    | {"plc", "gmbh", "ag", "sa", "kk"}
 )
+JAPANESE_LEGAL_FORMS = ("株式会社", "有限会社", "合同会社")
 PLACEHOLDER_PRODUCTS = frozenset({"na", "unknown", "unspecified", "none", "notapplicable"})
 PARTIAL_MATCH_LENGTH = 5
 ASCII_WORD_LENGTH = 3
 
 
+def _folded(text: str) -> str:
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    return unicodedata.normalize("NFKC", SPACE_BEFORE_SOUND_MARK.sub("", folded))
+
+
 def name_key(text: str) -> str:
-    return NOT_IN_A_KEY.sub("", unicodedata.normalize("NFKC", text).casefold())
+    return NOT_IN_A_KEY.sub("", _folded(text))
 
 
 def vendor_key(text: str) -> str:
-    words = KEY_WORD.findall(unicodedata.normalize("NFKC", text).casefold())
+    words = KEY_WORD.findall(_folded(text))
     while len(words) > 1 and words[-1] in LEGAL_FORMS:
         words.pop()
     while len(words) > 1 and words[0] in LEGAL_FORMS:
         words.pop(0)
-    return "".join(words)
+    key = "".join(words)
+    for form in JAPANESE_LEGAL_FORMS:
+        if key.startswith(form) and len(key) > len(form):
+            key = key.removeprefix(form)
+        if key.endswith(form) and len(key) > len(form):
+            key = key.removesuffix(form)
+    return key
 
 
 def ascii_words(text: str) -> list[str]:
-    words = ASCII_WORD.findall(unicodedata.normalize("NFKC", text).casefold())
+    words = ASCII_WORD.findall(_folded(text))
     return sorted((word for word in words if len(word) >= ASCII_WORD_LENGTH), key=len, reverse=True)
 
 

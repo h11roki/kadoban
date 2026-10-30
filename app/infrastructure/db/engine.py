@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection as SqliteConnection
 
@@ -36,3 +37,7 @@ def _begin(connection: Connection) -> None:
         connection.exec_driver_sql("BEGIN IMMEDIATE")
     else:
         connection.exec_driver_sql("BEGIN")
+
+
+def timestamp_text(moment: datetime) -> str:
+    return moment.astimezone(UTC).isoformat(timespec="microseconds")

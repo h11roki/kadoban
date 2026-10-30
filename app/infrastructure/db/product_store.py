@@ -1,12 +1,12 @@
 from collections.abc import Collection
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import Engine, func, insert, select, tuple_
 from sqlalchemy.exc import DBAPIError
 
 from app.application.ports import ReplicaError
 from app.domain.product import IndexedName, NameKey, Product, ProductRole, RegisteredProduct
-from app.infrastructure.db.engine import MIGRATION_HINT, TAKE_WRITE_LOCK
+from app.infrastructure.db.engine import MIGRATION_HINT, TAKE_WRITE_LOCK, timestamp_text
 from app.infrastructure.db.tables import product_keys, product_spellings, products
 
 
@@ -16,27 +16,33 @@ class SqlProductNameIndex:
 
     def search(self, query_key: str, limit: int) -> list[IndexedName]:
         names = product_spellings.c
-        statement = (
-            select(
-                names.vendor_key, names.product_key, names.vendor, names.product, names.cve_count
-            )
+        total = func.sum(names.cve_count).label("total")
+        top = (
+            select(names.vendor_key, names.product_key, total)
             .where((names.vendor_key + names.product_key).like(f"%{query_key}%"))
-            .order_by(names.cve_count.desc(), names.vendor, names.product)
+            .group_by(names.vendor_key, names.product_key)
+            .order_by(total.desc(), names.vendor_key, names.product_key)
+            .limit(limit)
         )
-        spellings: dict[tuple[str, str], dict[str, None]] = {}
-        totals: dict[tuple[str, str], int] = {}
         try:
             with self._engine.connect() as connection:
-                for vendor_key, product_key, vendor, product, cve_count in connection.execute(
-                    statement
+                totals = {
+                    (vendor_key, product_key): cve_count
+                    for vendor_key, product_key, cve_count in connection.execute(top)
+                }
+                spellings: dict[tuple[str, str], dict[str, None]] = {key: {} for key in totals}
+                for vendor_key, product_key, vendor, product in connection.execute(
+                    select(names.vendor_key, names.product_key, names.vendor, names.product)
+                    .where(tuple_(names.vendor_key, names.product_key).in_(list(totals)))
+                    .order_by(names.cve_count.desc(), names.vendor, names.product)
                 ):
-                    key = (vendor_key, product_key)
-                    spellings.setdefault(key, {})[f"{vendor} {product}"] = None
-                    totals[key] = totals.get(key, 0) + cve_count
+                    spellings[(vendor_key, product_key)][f"{vendor} {product}"] = None
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB を読めない({error.orig})。{MIGRATION_HINT}") from error
-        ranked = sorted(totals, key=lambda key: (-totals[key], key))[:limit]
-        return [IndexedName(NameKey(*key), tuple(spellings[key]), totals[key]) for key in ranked]
+        return [
+            IndexedName(NameKey(*key), tuple(spellings[key]), cve_count)
+            for key, cve_count in totals.items()
+        ]
 
     def cve_counts(self, keys: Collection[NameKey]) -> dict[NameKey, int]:
         if not keys:
@@ -77,9 +83,7 @@ class SqlProductLedger:
                         version=product.version,
                         role=product.role.value,
                         maintainer=product.maintainer,
-                        registered_at=registered_at.astimezone(UTC).isoformat(
-                            timespec="microseconds"
-                        ),
+                        registered_at=timestamp_text(registered_at),
                     )
                     .returning(products.c.id)
                 ).scalar_one()

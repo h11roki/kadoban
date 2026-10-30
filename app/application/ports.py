@@ -6,7 +6,7 @@ from typing import Protocol
 
 from app.domain.advisory import Advisory
 from app.domain.exploited import ExploitedCatalog
-from app.domain.product import Alias, IndexedName, NameKey, Product, RegisteredProduct
+from app.domain.product import IndexedName, NameKey, Product, RegisteredProduct
 
 
 class AdvisorySourceError(Exception):
@@ -93,10 +93,6 @@ class ProductNameIndex(Protocol):
     def search(self, query_key: str, limit: int) -> list[IndexedName]: ...
 
     def cve_counts(self, keys: Collection[NameKey]) -> dict[NameKey, int]: ...
-
-
-class AliasBook(Protocol):
-    def answering_to(self, query_key: str) -> list[Alias]: ...
 
 
 class ProductLedger(Protocol):

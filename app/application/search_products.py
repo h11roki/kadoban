@@ -1,7 +1,8 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from app.application.ports import AliasBook, InvalidRequest, ProductNameIndex
-from app.domain.product import NameKey, ascii_words, name_key
+from app.application.ports import InvalidRequest, ProductNameIndex
+from app.domain.product import Alias, NameKey, ascii_words, name_key
 
 CANDIDATE_LIMIT = 20
 
@@ -16,7 +17,7 @@ class ProductCandidate:
 
 
 class SearchProducts:
-    def __init__(self, index: ProductNameIndex, aliases: AliasBook) -> None:
+    def __init__(self, index: ProductNameIndex, aliases: Sequence[Alias]) -> None:
         self._index = index
         self._aliases = aliases
 
@@ -25,7 +26,9 @@ class SearchProducts:
         if not query_key:
             raise InvalidRequest("呼び名には英数字か、かなか、漢字を入れる")
         candidates: list[ProductCandidate] = []
-        for alias in self._aliases.answering_to(query_key):
+        for alias in self._aliases:
+            if not alias.answers_to(query_key):
+                continue
             counts = self._index.cve_counts(alias.keys)
             known = tuple(key for key in alias.keys if key in counts)
             if known:

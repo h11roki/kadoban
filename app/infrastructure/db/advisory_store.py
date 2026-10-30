@@ -1,7 +1,7 @@
 import zlib
 from collections.abc import Sequence
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import Connection, Engine, delete, distinct, func, insert, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -16,7 +16,7 @@ from app.application.ports import (
 )
 from app.domain.exploited import ExploitedCatalog
 from app.domain.product import PLACEHOLDER_PRODUCTS, name_key, vendor_key
-from app.infrastructure.db.engine import MIGRATION_HINT, TAKE_WRITE_LOCK
+from app.infrastructure.db.engine import MIGRATION_HINT, TAKE_WRITE_LOCK, timestamp_text
 from app.infrastructure.db.tables import (
     cna_ranges,
     cves,
@@ -80,7 +80,7 @@ class SqlAdvisoryStore:
                 fresh: list[AdvisoryRecord] = []
                 readable_ids: list[str] = []
                 for cve_id, record in latest.items():
-                    modified = _timestamp(record.advisory.last_modified)
+                    modified = timestamp_text(record.advisory.last_modified)
                     if cve_id not in stored or modified >= stored[cve_id]:
                         readable_ids.append(cve_id)
                     if cve_id not in stored or modified > stored[cve_id]:
@@ -98,8 +98,8 @@ class SqlAdvisoryStore:
                     [
                         {
                             "cve_id": record.advisory.cve_id,
-                            "published": _timestamp(record.advisory.published),
-                            "last_modified": _timestamp(record.advisory.last_modified),
+                            "published": timestamp_text(record.advisory.published),
+                            "last_modified": timestamp_text(record.advisory.last_modified),
                             "status": record.advisory.status,
                             "original": zlib.compress(record.original_json),
                         }
@@ -139,11 +139,11 @@ class SqlAdvisoryStore:
                     )
                 }
                 rows = [
-                    {"cve_id": cve_id, "reason": record.reason, "seen_at": _timestamp(seen_at)}
+                    {"cve_id": cve_id, "reason": record.reason, "seen_at": timestamp_text(seen_at)}
                     for cve_id, record in identified.items()
                     if cve_id not in stored
                     or record.last_modified is None
-                    or _timestamp(record.last_modified) > stored[cve_id]
+                    or timestamp_text(record.last_modified) > stored[cve_id]
                 ]
                 if not rows:
                     return
@@ -183,7 +183,11 @@ class SqlAdvisoryStore:
                         .group_by(table.c.vendor, table.c.product)
                     ):
                         vendor_part, product_part = vendor_key(vendor), name_key(product)
-                        if vendor_part and product_part not in PLACEHOLDER_PRODUCTS | {""}:
+                        if (
+                            vendor_part
+                            and product_part
+                            and product_part not in PLACEHOLDER_PRODUCTS
+                        ):
                             rows.append(
                                 {
                                     "source": source,
@@ -200,10 +204,6 @@ class SqlAdvisoryStore:
                     connection.execute(insert(product_spellings), rows)
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
-
-
-def _timestamp(moment: datetime) -> str:
-    return moment.astimezone(UTC).isoformat(timespec="microseconds")
 
 
 def _stored_release(connection: Connection, source: str) -> datetime | None:
@@ -226,8 +226,8 @@ def _record_state(
 ) -> None:
     state = {
         "version": version,
-        "released_at": _timestamp(released),
-        "synced_at": _timestamp(synced_at),
+        "released_at": timestamp_text(released),
+        "synced_at": timestamp_text(synced_at),
     }
     connection.execute(
         sqlite_insert(source_states)

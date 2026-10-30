@@ -111,3 +111,32 @@ def test_a_company_name_is_stored_in_one_spelling() -> None:
     )
 
     assert (product.company, company_name("Acme 工業")) == ("Acme 工業", "Acme 工業")
+
+
+@pytest.mark.parametrize(
+    ("text", "key"),
+    [
+        ("カ゛ス", "ガス"),
+        ("ｶﾞｽ", "ガス"),
+        ("トレンド・マイクロ", "トレンドマイクロ"),
+        ("々ー", "々ー"),
+    ],
+)
+def test_a_name_key_composes_sound_marks_drops_kana_punctuation_and_is_stable(
+    text: str, key: str
+) -> None:
+    assert (name_key(text), name_key(name_key(text))) == (key, key)
+
+
+@pytest.mark.parametrize(
+    ("text", "key"),
+    [
+        ("株式会社サイボウズ", "サイボウズ"),
+        ("サイボウズ株式会社", "サイボウズ"),
+        ("株式会社", "株式会社"),
+    ],
+)
+def test_a_vendor_key_drops_japanese_legal_forms_written_without_spaces(
+    text: str, key: str
+) -> None:
+    assert vendor_key(text) == key

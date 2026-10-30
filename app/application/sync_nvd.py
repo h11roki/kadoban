@@ -9,6 +9,7 @@ from app.application.ports import (
     AdvisoryStore,
     NvdFeedSource,
     NvdSyncKind,
+    ReplicaError,
     UnreadableRecord,
 )
 
@@ -61,8 +62,9 @@ class SyncNvd:
                         record for record in batch if isinstance(record, UnreadableRecord)
                     ]
                     if readable:
-                        written += self._store.write_advisories(readable)
-                written_in_all_feeds += written
+                        written_in_batch = self._store.write_advisories(readable)
+                        written += written_in_batch
+                        written_in_all_feeds += written_in_batch
                 if len(unreadable) > max(UNREADABLE_COUNT_FLOOR, read * UNREADABLE_SHARE_LIMIT):
                     raise AdvisorySourceError(
                         f"NVD の {feed.name} の {len(unreadable):,} / {read:,} 件が読めず、"
@@ -72,9 +74,15 @@ class SyncNvd:
                     self._store.record_unreadable(unreadable, seen_at=started)
                 self._on_feed(NvdFeedSyncResult(feed.name, read, written, tuple(unreadable)))
                 newest = feed.last_modified if newest is None else max(newest, feed.last_modified)
-        finally:
+        except Exception as error:
             if written_in_all_feeds:
-                self._store.rebuild_product_names()
+                try:
+                    self._store.rebuild_product_names()
+                except ReplicaError as rebuild_error:
+                    error.add_note(f"製品名の索引も作り直せなかった: {rebuild_error}")
+            raise
+        if written_in_all_feeds:
+            self._store.rebuild_product_names()
         if newest is not None:
             self._store.record_nvd_sync(kind, released=newest, synced_at=started)
         return kind

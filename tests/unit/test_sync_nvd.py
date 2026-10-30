@@ -8,6 +8,7 @@ from app.application.ports import (
     AdvisoryRecord,
     AdvisorySourceError,
     NvdSyncKind,
+    ReplicaError,
     UnreadableRecord,
 )
 from app.application.sync_nvd import NvdFeedSyncResult, SyncNvd
@@ -199,3 +200,37 @@ def test_the_product_index_is_not_rebuilt_when_nothing_was_written() -> None:
     sync_nvd.run()
 
     assert (len(store.recorded), store.rebuilds) == (1, 0)
+
+
+class FailingFeed(ListedFeed):
+    def records(self) -> Iterator[AdvisoryRecord | UnreadableRecord]:
+        yield from self.items
+        raise AdvisorySourceError("つながりが切れた")
+
+
+def test_records_written_before_a_feed_breaks_still_rebuild_the_index() -> None:
+    feeds = source()
+    feeds.recent = FailingFeed("modified", FEED_MODIFIED, [record(n) for n in range(500)])
+    store = CountingStore(NOW - timedelta(days=1))
+    sync_nvd, _ = sync(feeds, store)
+
+    with pytest.raises(AdvisorySourceError, match="切れた"):
+        sync_nvd.run()
+
+    assert (store.batches, store.rebuilds, store.recorded) == ([500], 1, [])
+
+
+class BrokenIndexStore(CountingStore):
+    def rebuild_product_names(self) -> None:
+        raise ReplicaError("索引に書けない")
+
+
+def test_a_failed_rebuild_is_noted_on_the_original_error() -> None:
+    feeds = source()
+    feeds.recent = FailingFeed("modified", FEED_MODIFIED, [record(n) for n in range(500)])
+    sync_nvd, _ = sync(feeds, BrokenIndexStore(NOW - timedelta(days=1)))
+
+    with pytest.raises(AdvisorySourceError) as raised:
+        sync_nvd.run()
+
+    assert raised.value.__notes__ == ["製品名の索引も作り直せなかった: 索引に書けない"]

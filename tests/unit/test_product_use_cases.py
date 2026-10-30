@@ -34,14 +34,6 @@ class ListedIndex:
         return {name.key: name.cve_count for name in self.names if name.key in keys}
 
 
-class ListedAliases:
-    def __init__(self, aliases: list[Alias]) -> None:
-        self.aliases = aliases
-
-    def answering_to(self, query_key: str) -> list[Alias]:
-        return [alias for alias in self.aliases if alias.answers_to(query_key)]
-
-
 class RecordingLedger:
     def __init__(self) -> None:
         self.added: list[tuple[Product, datetime]] = []
@@ -71,7 +63,7 @@ FORTIGATE = Alias(
 
 
 def search(call: str) -> list[ProductCandidate]:
-    return SearchProducts(INDEX, ListedAliases([FORTIGATE])).run(call)
+    return SearchProducts(INDEX, [FORTIGATE]).run(call)
 
 
 def test_an_alias_comes_first_with_only_the_keys_in_the_index_and_their_count() -> None:
@@ -118,7 +110,7 @@ def test_a_product_with_a_key_missing_from_the_index_is_refused() -> None:
 
 
 def test_a_japanese_call_with_no_hits_is_searched_again_by_its_ascii_part() -> None:
-    candidates = SearchProducts(INDEX, ListedAliases([])).run("フォーティ fortiproxy")
+    candidates = SearchProducts(INDEX, []).run("フォーティ fortiproxy")
 
     assert [candidate.keys for candidate in candidates] == [(FORTIPROXY,)]
 
@@ -133,6 +125,6 @@ def test_listing_finds_the_company_however_its_name_was_typed() -> None:
 
 
 def test_a_japanese_call_is_searched_again_by_each_ascii_word_longest_first() -> None:
-    candidates = SearchProducts(INDEX, ListedAliases([])).run("ヤマハ fortiproxy の 2 台目")
+    candidates = SearchProducts(INDEX, []).run("ヤマハ fortiproxy の 2 台目")
 
     assert [candidate.keys for candidate in candidates] == [(FORTIPROXY,)]

@@ -24,7 +24,7 @@ from app.application.search_products import SearchProducts
 from app.application.sync_exploited import SyncExploited
 from app.application.sync_nvd import NvdFeedSyncResult, SyncNvd
 from app.domain.product import NameKey, Product, ProductRole
-from app.infrastructure.aliases import TomlAliasBook
+from app.infrastructure.aliases import load_aliases
 from app.infrastructure.db.advisory_store import SqlAdvisoryStore
 from app.infrastructure.db.engine import create_sqlite_engine
 from app.infrastructure.db.product_store import SqlProductLedger, SqlProductNameIndex
@@ -66,8 +66,12 @@ def replica(settings: Settings) -> Iterator[Engine]:
         engine.dispose()
 
 
+def echo_error(error: Exception) -> None:
+    typer.echo("\n".join([str(error), *getattr(error, "__notes__", [])]), err=True)
+
+
 def fail(error: Exception) -> typer.Exit:
-    typer.echo(str(error), err=True)
+    echo_error(error)
     return typer.Exit(1)
 
 
@@ -102,7 +106,7 @@ def sync_advisories() -> None:
             try:
                 kev = SyncExploited(CisaKevCatalog(client), store, now=now).run()
             except AdvisorySourceError as error:
-                typer.echo(str(error), err=True)
+                echo_error(error)
                 source_failed = True
             else:
                 match kev.replacement:
@@ -118,7 +122,7 @@ def sync_advisories() -> None:
             try:
                 nvd_kind = SyncNvd(feeds, store, now=now, on_feed=echo_nvd_feed).run()
             except AdvisorySourceError as error:
-                typer.echo(str(error), err=True)
+                echo_error(error)
                 source_failed = True
             else:
                 scope = "全件" if nvd_kind is NvdSyncKind.ALL else "直近 8 日の更新分"
@@ -136,7 +140,7 @@ def search_products(
     settings = load_settings()
     try:
         with replica(settings) as engine:
-            candidates = SearchProducts(SqlProductNameIndex(engine), TomlAliasBook()).run(call)
+            candidates = SearchProducts(SqlProductNameIndex(engine), load_aliases()).run(call)
     except (ConfigurationError, InvalidRequest, ReplicaError) as error:
         raise fail(error) from error
     if not candidates:
