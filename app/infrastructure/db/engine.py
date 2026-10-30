@@ -1,13 +1,18 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection as SqliteConnection
 
 from sqlalchemy import URL, Connection, Engine, create_engine, event
+from sqlalchemy.exc import DBAPIError
 
 from app.application.ports import ReplicaError
 
 TAKE_WRITE_LOCK = "take_write_lock"
 BUSY_TIMEOUT_SECONDS = 30
+CANNOT_READ = "手元の DB を読めない"
+CANNOT_WRITE = "手元の DB に書けない"
 MIGRATION_HINT = (
     "`uv run alembic upgrade head` を流したか、ほかの取り込みが長く書いていないか確かめる"
 )
@@ -41,3 +46,11 @@ def _begin(connection: Connection) -> None:
 
 def timestamp_text(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
+
+
+@contextmanager
+def replica_errors(failure: str) -> Iterator[None]:
+    try:
+        yield
+    except DBAPIError as error:
+        raise ReplicaError(f"{failure}({error.orig})。{MIGRATION_HINT}") from error

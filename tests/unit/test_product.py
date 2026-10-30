@@ -7,6 +7,7 @@ from app.domain.product import (
     ProductRole,
     ascii_words,
     company_name,
+    index_key,
     name_key,
     vendor_key,
 )
@@ -61,13 +62,13 @@ def test_a_product_needs_a_company_a_label_and_distinct_keys(
     ("query", "answers"),
     [
         ("fortigate", True),
-        ("forti", True),
-        ("fortigate60f", True),
+        ("本社のfortigate60f", True),
         ("フォーティゲート", True),
+        ("forti", False),
         ("asa", False),
     ],
 )
-def test_an_alias_answers_to_a_query_inside_a_call_or_a_call_inside_the_query(
+def test_an_alias_answers_to_its_call_or_a_query_containing_a_long_call(
     query: str, answers: bool
 ) -> None:
     alias = Alias("FortiGate(FortiOS)", ("FortiGate", "フォーティゲート"), (FORTIOS,))
@@ -93,7 +94,7 @@ def test_a_vendor_key_drops_legal_forms_at_either_end(text: str, key: str) -> No
 
 @pytest.mark.parametrize(
     ("query", "answers"),
-    [("asa", True), ("asahi", False), ("ciscoasa", True), ("os", False), ("cisco", True)],
+    [("asa", True), ("asahi", False), ("本社ciscoasa", True), ("os", False), ("cisco", False)],
 )
 def test_a_short_call_only_answers_to_the_same_word(query: str, answers: bool) -> None:
     alias = Alias("Cisco ASA", ("ASA", "Cisco ASA"), (NameKey("cisco", "asa"),))
@@ -133,10 +134,33 @@ def test_a_name_key_composes_sound_marks_drops_kana_punctuation_and_is_stable(
     [
         ("株式会社サイボウズ", "サイボウズ"),
         ("サイボウズ株式会社", "サイボウズ"),
+        ("有限会社株式会社サイボウズ", "サイボウズ"),
         ("株式会社", "株式会社"),
     ],
 )
 def test_a_vendor_key_drops_japanese_legal_forms_written_without_spaces(
     text: str, key: str
 ) -> None:
-    assert vendor_key(text) == key
+    assert (vendor_key(text), vendor_key(vendor_key(text))) == (key, key)
+
+
+def test_an_empty_version_or_maintainer_is_unknown() -> None:
+    product = Product("山田製作所", "本社の FortiGate", (FORTIOS,), "  ", ProductRole.VPN, " ")
+
+    assert (product.version, product.maintainer) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("vendor", "product", "key"),
+    [
+        ("Fortinet, Inc.", "FortiOS", FORTIOS),
+        ("n/a", "FortiOS", NameKey("na", "fortios")),
+        ("Fortinet", "n/a", None),
+        ("Fortinet", "Unknown", None),
+        ("—", "FortiOS", None),
+    ],
+)
+def test_an_index_key_skips_names_that_say_nothing(
+    vendor: str, product: str, key: NameKey | None
+) -> None:
+    assert index_key(vendor, product) == key

@@ -9,6 +9,7 @@ from app.application.ports import (
     AdvisoryStore,
     NvdFeedSource,
     NvdSyncKind,
+    ProductNameIndex,
     ReplicaError,
     UnreadableRecord,
 )
@@ -32,11 +33,13 @@ class SyncNvd:
         self,
         source: NvdFeedSource,
         store: AdvisoryStore,
+        index: ProductNameIndex,
         now: Callable[[], datetime],
         on_feed: Callable[[NvdFeedSyncResult], None],
     ) -> None:
         self._source = source
         self._store = store
+        self._index = index
         self._now = now
         self._on_feed = on_feed
 
@@ -75,14 +78,14 @@ class SyncNvd:
                 self._on_feed(NvdFeedSyncResult(feed.name, read, written, tuple(unreadable)))
                 newest = feed.last_modified if newest is None else max(newest, feed.last_modified)
         except Exception as error:
-            if written_in_all_feeds:
+            if written_in_all_feeds and not isinstance(error, ReplicaError):
                 try:
-                    self._store.rebuild_product_names()
+                    self._index.rebuild()
                 except ReplicaError as rebuild_error:
                     error.add_note(f"製品名の索引も作り直せなかった: {rebuild_error}")
             raise
-        if written_in_all_feeds:
-            self._store.rebuild_product_names()
         if newest is not None:
             self._store.record_nvd_sync(kind, released=newest, synced_at=started)
+        if written_in_all_feeds:
+            self._index.rebuild()
         return kind

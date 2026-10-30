@@ -1,9 +1,9 @@
-from app.application.ports import AdvisoryStore
+from app.application.ports import ProductNameIndex
 
 
 class RebuildProductIndex:
-    def __init__(self, store: AdvisoryStore) -> None:
-        self._store = store
+    def __init__(self, index: ProductNameIndex) -> None:
+        self._index = index
 
     def run(self) -> None:
-        self._store.rebuild_product_names()
+        self._index.rebuild()

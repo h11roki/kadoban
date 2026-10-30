@@ -49,5 +49,5 @@ keys = ["openbsd/openssh"]
 
 [[alias]]
 name = "Microsoft Exchange Server"
-calls = ["Exchange", "Exchange Server", "エクスチェンジ"]
+calls = ["Exchange Server", "エクスチェンジサーバー", "エクスチェンジサーバ"]
 keys = ["microsoft/exchangeserver"]

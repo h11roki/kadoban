@@ -19,7 +19,9 @@ from app.domain.product import (
 NOW = datetime(2026, 10, 30, 9, 0, tzinfo=UTC)
 FORTIOS = NameKey("fortinet", "fortios")
 FORTINET_FORTIOS = NameKey("fortinet", "fortinetfortios")
+FORTIOS_CARRIER = NameKey("fortinet", "fortioscarrier")
 FORTIPROXY = NameKey("fortinet", "fortiproxy")
+CISCO_ASA = NameKey("cisco", "adaptivesecurityappliance")
 UNKNOWN = NameKey("fortinet", "fortigate9999")
 
 
@@ -32,6 +34,9 @@ class ListedIndex:
 
     def cve_counts(self, keys: Collection[NameKey]) -> dict[NameKey, int]:
         return {name.key: name.cve_count for name in self.names if name.key in keys}
+
+    def rebuild(self) -> None:
+        raise NotImplementedError
 
 
 class RecordingLedger:
@@ -54,12 +59,15 @@ INDEX = ListedIndex(
     [
         IndexedName(FORTIOS, ("nvd fortinet:fortios", "cna Fortinet:FortiOS"), 482),
         IndexedName(FORTINET_FORTIOS, ("cna Fortinet:Fortinet FortiOS",), 39),
+        IndexedName(FORTIOS_CARRIER, ("nvd fortinet:fortios_carrier",), 12),
         IndexedName(FORTIPROXY, ("nvd fortinet:fortiproxy",), 248),
+        IndexedName(CISCO_ASA, ("nvd cisco:adaptive_security_appliance",), 361),
     ]
 )
 FORTIGATE = Alias(
     "FortiGate(FortiOS)", ("FortiGate", "FortiOS"), (FORTIOS, FORTINET_FORTIOS, UNKNOWN)
 )
+ASA = Alias("Cisco ASA", ("ASA",), (CISCO_ASA,))
 
 
 def search(call: str) -> list[ProductCandidate]:
@@ -75,11 +83,19 @@ def test_an_alias_comes_first_with_only_the_keys_in_the_index_and_their_count() 
 
 
 def test_index_hits_follow_the_alias_without_repeating_its_keys() -> None:
-    candidates = search("forti")
+    candidates = search("fortios")
 
     assert [(candidate.label, candidate.keys) for candidate in candidates] == [
         ("FortiGate(FortiOS)", (FORTIOS, FORTINET_FORTIOS)),
-        ("nvd fortinet:fortiproxy", (FORTIPROXY,)),
+        ("nvd fortinet:fortios_carrier", (FORTIOS_CARRIER,)),
+    ]
+
+
+def test_a_short_alias_call_is_found_again_by_an_ascii_word_of_a_japanese_call() -> None:
+    candidates = SearchProducts(INDEX, [ASA]).run("本社の ASA")
+
+    assert [(candidate.label, candidate.from_alias) for candidate in candidates] == [
+        ("Cisco ASA", True)
     ]
 
 

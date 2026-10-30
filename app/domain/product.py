@@ -36,11 +36,14 @@ def vendor_key(text: str) -> str:
     while len(words) > 1 and words[0] in LEGAL_FORMS:
         words.pop(0)
     key = "".join(words)
-    for form in JAPANESE_LEGAL_FORMS:
-        if key.startswith(form) and len(key) > len(form):
-            key = key.removeprefix(form)
-        if key.endswith(form) and len(key) > len(form):
-            key = key.removesuffix(form)
+    stripped = None
+    while stripped != key:
+        stripped = key
+        for form in JAPANESE_LEGAL_FORMS:
+            if key.startswith(form) and len(key) > len(form):
+                key = key.removeprefix(form)
+            if key.endswith(form) and len(key) > len(form):
+                key = key.removesuffix(form)
     return key
 
 
@@ -95,6 +98,8 @@ class Product:
     def __post_init__(self) -> None:
         object.__setattr__(self, "company", company_name(self.company))
         object.__setattr__(self, "label", self.label.strip())
+        object.__setattr__(self, "version", (self.version or "").strip() or None)
+        object.__setattr__(self, "maintainer", (self.maintainer or "").strip() or None)
         if not self.company:
             raise ValueError("会社を書く")
         if not self.label:
@@ -119,13 +124,12 @@ class Alias:
     keys: tuple[NameKey, ...]
 
     def answers_to(self, query_key: str) -> bool:
-        for call_key in (name_key(call) for call in self.calls):
-            shorter, longer = sorted((call_key, query_key), key=len)
-            if shorter and (
-                shorter == longer or (len(shorter) >= PARTIAL_MATCH_LENGTH and shorter in longer)
-            ):
-                return True
-        return False
+        return any(
+            call_key == query_key
+            or (len(call_key) >= PARTIAL_MATCH_LENGTH and call_key in query_key)
+            for call_key in (name_key(call) for call in self.calls)
+            if call_key
+        )
 
 
 @dataclass(frozen=True)
@@ -133,3 +137,10 @@ class IndexedName:
     key: NameKey
     spellings: tuple[str, ...]
     cve_count: int
+
+
+def index_key(vendor: str, product: str) -> NameKey | None:
+    vendor_part, product_part = vendor_key(vendor), name_key(product)
+    if not vendor_part or not product_part or product_part in PLACEHOLDER_PRODUCTS:
+        return None
+    return NameKey(vendor_part, product_part)

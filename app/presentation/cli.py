@@ -120,7 +120,9 @@ def sync_advisories() -> None:
                         )
             feeds = NvdFeedFiles(client, settings.nvd_feed_dir, this_year=now().year)
             try:
-                nvd_kind = SyncNvd(feeds, store, now=now, on_feed=echo_nvd_feed).run()
+                nvd_kind = SyncNvd(
+                    feeds, store, SqlProductNameIndex(engine), now=now, on_feed=echo_nvd_feed
+                ).run()
             except AdvisorySourceError as error:
                 echo_error(error)
                 source_failed = True
@@ -169,9 +171,9 @@ def add_product(
             company=company,
             label=label,
             keys=tuple(NameKey.parse(text) for text in key),
-            version=version or None,
+            version=version,
             role=role,
-            maintainer=maintainer or None,
+            maintainer=maintainer,
         )
     except ValueError as error:
         raise fail(error) from error
@@ -192,7 +194,7 @@ def reindex_products() -> None:
     settings = load_settings()
     try:
         with exclusive_sync(settings.data_dir), replica(settings) as engine:
-            RebuildProductIndex(SqlAdvisoryStore(engine)).run()
+            RebuildProductIndex(SqlProductNameIndex(engine)).run()
     except ReplicaError as error:
         raise fail(error) from error
     typer.echo("製品名の索引を作り直した")

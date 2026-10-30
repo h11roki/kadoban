@@ -25,29 +25,28 @@ class SearchProducts:
         query_key = name_key(call)
         if not query_key:
             raise InvalidRequest("呼び名には英数字か、かなか、漢字を入れる")
+        for key in dict.fromkeys([query_key, *ascii_words(call)]):
+            candidates = self._candidates(key)
+            if candidates:
+                return candidates
+        return []
+
+    def _candidates(self, query_key: str) -> list[ProductCandidate]:
+        aliases = [alias for alias in self._aliases if alias.answers_to(query_key)]
+        counts = self._index.cve_counts({key for alias in aliases for key in alias.keys})
         candidates: list[ProductCandidate] = []
-        for alias in self._aliases:
-            if not alias.answers_to(query_key):
-                continue
-            counts = self._index.cve_counts(alias.keys)
+        for alias in aliases:
             known = tuple(key for key in alias.keys if key in counts)
             if known:
-                candidates.append(
-                    ProductCandidate(alias.name, known, (), sum(counts.values()), from_alias=True)
-                )
+                total = sum(counts[key] for key in known)
+                candidates.append(ProductCandidate(alias.name, known, (), total, from_alias=True))
         covered = {key for candidate in candidates for key in candidate.keys}
-        limit = CANDIDATE_LIMIT + len(covered)
-        names = self._index.search(query_key, limit)
-        if not names and not candidates:
-            for word in ascii_words(call):
-                names = self._index.search(word, limit)
-                if names:
-                    break
-        candidates += [
+        names = self._index.search(query_key, CANDIDATE_LIMIT + len(covered))
+        found = [
             ProductCandidate(
                 name.spellings[0], (name.key,), name.spellings, name.cve_count, from_alias=False
             )
             for name in names
             if name.key not in covered
-        ][:CANDIDATE_LIMIT]
-        return candidates
+        ]
+        return candidates + found[:CANDIDATE_LIMIT]
