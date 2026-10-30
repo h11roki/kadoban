@@ -22,7 +22,7 @@ class SqlAdvisoryStore:
                     select(source_states.c.released_at).where(source_states.c.source == KEV_SOURCE)
                 )
         except OperationalError as error:
-            raise ReplicaError(f"手元の DB を読めない: {error}") from error
+            raise ReplicaError(f"手元の DB を読めない: {error.orig}") from error
         return None if released is None else datetime.fromisoformat(released)
 
     def replace_exploited_catalog(self, catalog: ExploitedCatalog, synced_at: datetime) -> None:
@@ -53,4 +53,4 @@ class SqlAdvisoryStore:
                     .on_conflict_do_update(index_elements=[source_states.c.source], set_=state)
                 )
         except OperationalError as error:
-            raise ReplicaError(f"手元の DB に書けない: {error}") from error
+            raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
