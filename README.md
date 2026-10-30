@@ -6,7 +6,7 @@
 
 ## 状態
 
-フェーズ 1(製品台帳と脆弱性情報)の途中。CISA KEV を手元の SQLite に取り込める。
+フェーズ 1(製品台帳と脆弱性情報)の途中。CISA KEV と NVD の全件を手元の SQLite に取り込める。
 
 ## 使い方
 
@@ -16,7 +16,7 @@ uv run alembic upgrade head
 uv run python -m app.presentation.cli advisories sync
 ```
 
-DB はリポジトリ直下の `data/kadoban.db` にできる。置き場は環境変数 `KADOBAN_DATA_DIR` で変えられる。
+DB はリポジトリ直下の `data/kadoban.db` にでき、NVD の一括ファイルは `data/nvd/` に取る。置き場は環境変数 `KADOBAN_DATA_DIR` で変えられる。初回は NVD の全件を取るので時間がかかり、2 回目からは 7 日以内なら更新分だけを取る。途中で止めても、次は続きから取る。
 
 ## 開発
 

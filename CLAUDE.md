@@ -7,7 +7,9 @@
 - `uv sync`
 - `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`(CI と同じ。DB の結合テストは一時ディレクトリの SQLite に migration を流して使う)
 - `uv run alembic upgrade head` で DB を作る、または最新の形にする(`--sql` を付けると DB につながず SQL だけを出す)。DB は `KADOBAN_DATA_DIR`(既定はリポジトリ直下の `data`。どこから実行しても同じ場所。相対パスを書くと実行した場所から数えるので、変えるときは絶対パスで書く。git 管理外)の `kadoban.db`。表を変えたら `uv run alembic revision --autogenerate --rev-id <次の4桁> -m "<内容>"` で `migrations/versions/` に作る(ruff の hook で整形される)
-- `uv run python -m app.presentation.cli advisories sync` で CISA KEV を取り込む。公開日時(`dateReleased`)が手元より新しければ表をまるごと入れ替え、同じなら何もせず、古ければ(CDN の古い写しなど)入れ替えない。比べることと入れ替えることは 1 つの取引で行い、DB の部品が「入れ替えた / 同じ / 手元より古い」を返す。一覧が空か、同じ CVE が 2 度載っていれば入れ替えずに 1 で終わる(ADR 0004)。`KADOBAN_HTTP_TIMEOUT_SECONDS`(既定 60)は、つなぐ、1 回読む、1 回書くのそれぞれの待ちの上限で、取得全体の上限ではない。リダイレクトはたどる
+- `uv run python -m app.presentation.cli advisories sync` で CISA KEV と NVD を続けて取り込む。片方が取り込み元の失敗で止まっても、もう片方は流し、最後に 1 で終わる。手元の DB の失敗ならそこで止まる
+- NVD は、前回の取り込みから 7 日以内なら更新分のファイル(直近 8 日、gzip 約 13MB)だけを、そうでなければ年ごとの一括ファイル(2002 年から今年まで)を全部入れる(ADR 0004)。ファイルは `KADOBAN_DATA_DIR/nvd/` に取り、`.meta` の sha256(展開後の中身のもの)と合えば取り直さずに使う。合わなければ取り直し、それでも 3 回合わなければ断る。途中で切れたら `.part` と `.etag` を残し、次は ETag が同じときだけ続きから取る(つながりが切れたら同じ回の中で 3 回まで続きを取る)。ファイルは ijson で 1 件ずつ流して読み、1,000 件ずつ書く。CVE は手元より更新日時が新しいものだけを書き換え、元の JSON は zlib で縮めて `cves.original` に、範囲は `nvd_ranges`(NVD が付けた CPE と版の範囲。別の製品の上で動くときの条件があれば `on_platform`)と `cna_ranges`(採番機関が書いたベンダー名、製品名、版、`lessThan` など。版の無い製品は `default_status` だけの 1 行)に展開する。2025 年分(45,434 件)は 8 秒で書け、DB は 149MB 増える。この環境からの取得は毎秒約 47KB なので、初回は 1 時間半ほどかかる
+- KEV は、公開日時(`dateReleased`)が手元より新しければ表をまるごと入れ替え、同じなら何もせず、古ければ(CDN の古い写しなど)入れ替えない。比べることと入れ替えることは 1 つの取引で行い、DB の部品が「入れ替えた / 同じ / 手元より古い」を返す。一覧が空か、同じ CVE が 2 度載っていれば入れ替えずに 1 で終わる(ADR 0004)。`KADOBAN_HTTP_TIMEOUT_SECONDS`(既定 60)は、つなぐ、1 回読む、1 回書くのそれぞれの待ちの上限で、取得全体の上限ではない。リダイレクトはたどる
 
 ## 構成と依存の向き
 
@@ -15,7 +17,7 @@
 
 - domain: エンティティと純粋ロジック。標準ライブラリ以外を import しない
 - application: ユースケースとポート(`ports.py`)。ポートは差し替え先が実在するものだけ(取り込み元と手元の DB。テストではフェイクに替える)
-- infrastructure: 脆弱性情報の取り込み、DB、LLM、メールの実装
+- infrastructure: 脆弱性情報の取り込み(`kev.py`、`nvd_feeds.py`。取り込み元の JSON は pydantic で形を確かめてから domain に詰め替える)、DB、LLM、メールの実装
 - presentation: CLI(`presentation/cli.py`、typer)。合成ルートとして infrastructure の実装を組み立て、application のポートの型として渡す
 
 設定は `app/settings.py`(pydantic-settings、頭に `KADOBAN_` の付いた環境変数から読む)。DB は SQLAlchemy Core の表(`infrastructure/db/tables.py`)と Alembic(`migrations/`)。SQLite の取引は SQLAlchemy が始め(`infrastructure/db/engine.py`)、書く取引だけを実行の設定 `TAKE_WRITE_LOCK` で `BEGIN IMMEDIATE` にして、同時に走る取り込みが読んでから書くまでの間に割り込まないようにする。読むだけの取引は `BEGIN` で、書いている最中でも読める。取り込み元が失敗したか形が変わったときは infrastructure が、取り込み元の一覧が空か同じ ID が重なっているときはユースケースが `AdvisorySourceError` を投げる(空や重なりで表を壊さないのは取り込み元によらない決まりなので、ユースケースが確かめる)。手元の DB を読めないか書けないとき(置き場を作れない、migration を流していない、壊れている、保存した値が読めない)は infrastructure が `ReplicaError` に変える。どちらも `application/ports.py` にあり、CLI が文を出して 1 で終わる。設定の値が正しくないときも CLI が文を出して 1 で終わる。
