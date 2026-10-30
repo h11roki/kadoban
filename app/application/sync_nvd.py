@@ -48,7 +48,7 @@ class SyncNvd:
         else:
             kind = NvdSyncKind.RECENT_CHANGES
             feeds = iter([self._source.recent_changes()])
-        covered: datetime | None = None
+        newest: datetime | None = None
         for feed in feeds:
             read = written = 0
             unreadable: list[UnreadableRecord] = []
@@ -66,7 +66,7 @@ class SyncNvd:
             if unreadable:
                 self._store.record_unreadable(unreadable, seen_at=started)
             self._on_feed(NvdFeedSyncResult(feed.name, read, written, tuple(unreadable)))
-            covered = feed.last_modified if covered is None else min(covered, feed.last_modified)
-        if covered is not None:
-            self._store.record_nvd_sync(kind, released=covered, synced_at=started)
+            newest = feed.last_modified if newest is None else max(newest, feed.last_modified)
+        if newest is not None:
+            self._store.record_nvd_sync(kind, released=newest, synced_at=started)
         return kind

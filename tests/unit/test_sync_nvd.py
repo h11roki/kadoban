@@ -110,13 +110,13 @@ def test_all_feeds_are_read_when_the_copy_is_missing_or_older_than_seven_days(
     ]
 
 
-def test_a_full_sync_is_only_as_fresh_as_its_oldest_feed() -> None:
+def test_a_full_sync_is_as_fresh_as_its_newest_feed() -> None:
     store = CountingStore(released_at=None)
     sync_nvd, _ = sync(source(), store)
 
     sync_nvd.run()
 
-    assert store.recorded == [(NvdSyncKind.ALL, FEED_2002, NOW)]
+    assert store.recorded == [(NvdSyncKind.ALL, FEED_2003, NOW)]
 
 
 def test_only_recent_changes_are_read_while_the_copy_is_within_seven_days() -> None:
