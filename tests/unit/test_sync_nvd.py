@@ -62,6 +62,7 @@ class CountingStore:
     batches: list[int] = field(default_factory=list)
     unreadable: list[tuple[UnreadableRecord, datetime]] = field(default_factory=list)
     recorded: list[tuple[NvdSyncKind, datetime, datetime]] = field(default_factory=list)
+    rebuilds: int = 0
 
     def nvd_released_at(self) -> datetime | None:
         return self.released_at
@@ -75,6 +76,10 @@ class CountingStore:
 
     def record_nvd_sync(self, kind: NvdSyncKind, released: datetime, synced_at: datetime) -> None:
         self.recorded.append((kind, released, synced_at))
+
+    def rebuild_product_names(self) -> int:
+        self.rebuilds += 1
+        return 0
 
 
 def source() -> ListedSource:
@@ -130,6 +135,7 @@ def test_only_recent_changes_are_read_while_the_copy_is_within_seven_days() -> N
     assert kind is NvdSyncKind.RECENT_CHANGES
     assert reported == [NvdFeedSyncResult("modified", 1, 1, ())]
     assert store.recorded == [(NvdSyncKind.RECENT_CHANGES, FEED_MODIFIED, NOW)]
+    assert store.rebuilds == 1
 
 
 def test_records_are_written_in_batches_and_unchanged_ones_are_not_counted() -> None:
@@ -183,3 +189,4 @@ def test_many_unreadable_records_mean_the_format_changed_and_the_sync_stops() ->
         sync_nvd.run()
 
     assert store.recorded == []
+    assert store.rebuilds == 0

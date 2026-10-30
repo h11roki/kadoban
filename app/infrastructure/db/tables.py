@@ -2,6 +2,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     Date,
+    ForeignKey,
     Index,
     Integer,
     LargeBinary,
@@ -81,4 +82,37 @@ cna_ranges = Table(
     Column("less_than_or_equal", String),
     Column("version_type", String),
     Index("ix_cna_ranges_vendor_product", "vendor", "product"),
+)
+
+product_spellings = Table(
+    "product_spellings",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("source", String, nullable=False),
+    Column("vendor", String, nullable=False),
+    Column("product", String, nullable=False),
+    Column("vendor_key", String, nullable=False),
+    Column("product_key", String, nullable=False),
+    Column("cve_count", Integer, nullable=False),
+    Index("ix_product_spellings_keys", "vendor_key", "product_key"),
+)
+
+products = Table(
+    "products",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("company", String, nullable=False, index=True),
+    Column("label", String, nullable=False),
+    Column("version", String),
+    Column("role", String, nullable=False),
+    Column("maintainer", String),
+    Column("registered_at", String, nullable=False),
+)
+
+product_keys = Table(
+    "product_keys",
+    metadata,
+    Column("product_id", Integer, ForeignKey("products.id"), primary_key=True),
+    Column("vendor_key", String, primary_key=True),
+    Column("product_key", String, primary_key=True),
 )

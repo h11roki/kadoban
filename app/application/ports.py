@@ -1,4 +1,4 @@
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -6,6 +6,7 @@ from typing import Protocol
 
 from app.domain.advisory import Advisory
 from app.domain.exploited import ExploitedCatalog
+from app.domain.product import Alias, IndexedName, NameKey, Product, RegisteredProduct
 
 
 class AdvisorySourceError(Exception):
@@ -13,6 +14,10 @@ class AdvisorySourceError(Exception):
 
 
 class ReplicaError(Exception):
+    pass
+
+
+class InvalidRequest(Exception):
     pass
 
 
@@ -76,3 +81,21 @@ class AdvisoryStore(Protocol):
     def record_nvd_sync(
         self, kind: NvdSyncKind, released: datetime, synced_at: datetime
     ) -> None: ...
+
+    def rebuild_product_names(self) -> int: ...
+
+
+class ProductNameIndex(Protocol):
+    def search(self, query_key: str, limit: int) -> list[IndexedName]: ...
+
+    def cve_counts(self, keys: Collection[NameKey]) -> dict[NameKey, int]: ...
+
+
+class AliasBook(Protocol):
+    def answering_to(self, query_key: str) -> list[Alias]: ...
+
+
+class ProductLedger(Protocol):
+    def add(self, product: Product, registered_at: datetime) -> int: ...
+
+    def products(self, company: str) -> list[RegisteredProduct]: ...

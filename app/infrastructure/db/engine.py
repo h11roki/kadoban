@@ -6,6 +6,7 @@ from sqlalchemy import URL, Connection, Engine, create_engine, event
 from app.application.ports import ReplicaError
 
 TAKE_WRITE_LOCK = "take_write_lock"
+MIGRATION_HINT = "`uv run alembic upgrade head` を流したか確かめる"
 
 
 def create_sqlite_engine(path: Path) -> Engine:

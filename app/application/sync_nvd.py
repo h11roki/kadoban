@@ -68,5 +68,6 @@ class SyncNvd:
             self._on_feed(NvdFeedSyncResult(feed.name, read, written, tuple(unreadable)))
             newest = feed.last_modified if newest is None else max(newest, feed.last_modified)
         if newest is not None:
+            self._store.rebuild_product_names()
             self._store.record_nvd_sync(kind, released=newest, synced_at=started)
         return kind

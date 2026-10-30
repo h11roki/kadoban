@@ -1,0 +1,53 @@
+[[alias]]
+name = "FortiGate(FortiOS)"
+calls = ["FortiGate", "フォーティゲート", "FortiOS", "FortiWiFi"]
+keys = ["fortinet/fortios", "fortinet/fortinetfortios"]
+
+[[alias]]
+name = "Cisco ASA(Adaptive Security Appliance)"
+calls = ["Cisco ASA", "ASA", "シスコ ASA", "Adaptive Security Appliance"]
+keys = [
+  "cisco/adaptivesecurityappliancesoftware",
+  "cisco/ciscoadaptivesecurityapplianceasasoftware",
+  "cisco/ciscosecurefirewalladaptivesecurityapplianceasasoftware",
+]
+
+[[alias]]
+name = "Palo Alto(PAN-OS、GlobalProtect)"
+calls = ["Palo Alto", "パロアルト", "PAN-OS", "GlobalProtect"]
+keys = ["paloaltonetworks/panos", "paloaltonetworks/paloaltonetworkspanos"]
+
+[[alias]]
+name = "Ivanti Connect Secure(旧 Pulse Connect Secure)"
+calls = ["Ivanti Connect Secure", "Pulse Connect Secure", "Pulse Secure", "パルスセキュア"]
+keys = ["ivanti/connectsecure", "pulsesecure/pulseconnectsecure"]
+
+[[alias]]
+name = "SonicWall(SonicOS)"
+calls = ["SonicWall", "ソニックウォール", "SonicOS"]
+keys = ["sonicwall/sonicos"]
+
+[[alias]]
+name = "Citrix NetScaler(ADC、Gateway)"
+calls = ["NetScaler", "Citrix ADC", "Citrix Gateway", "シトリックス"]
+keys = [
+  "citrix/netscalergateway",
+  "citrix/netscalerapplicationdeliverycontroller",
+  "citrix/gateway",
+  "citrix/applicationdeliverycontroller",
+]
+
+[[alias]]
+name = "Sophos Firewall(XG、SFOS)"
+calls = ["Sophos Firewall", "Sophos XG", "ソフォス", "SFOS"]
+keys = ["sophos/sophosfirewall", "sophos/firewallfirmware", "sophos/xgfirewallfirmware", "sophos/sfos", "sophos/firewall"]
+
+[[alias]]
+name = "OpenSSH"
+calls = ["OpenSSH", "SSH サーバ"]
+keys = ["openbsd/openssh"]
+
+[[alias]]
+name = "Microsoft Exchange Server"
+calls = ["Exchange", "Exchange Server", "エクスチェンジ"]
+keys = ["microsoft/exchangeserver"]

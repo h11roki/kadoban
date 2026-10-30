@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from sqlalchemy import Connection, Engine, delete, insert, select
+from sqlalchemy import Connection, Engine, delete, distinct, func, insert, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError
 
@@ -15,19 +15,20 @@ from app.application.ports import (
     UnreadableRecord,
 )
 from app.domain.exploited import ExploitedCatalog
-from app.infrastructure.db.engine import TAKE_WRITE_LOCK
+from app.domain.product import name_key, vendor_key
+from app.infrastructure.db.engine import MIGRATION_HINT, TAKE_WRITE_LOCK
 from app.infrastructure.db.tables import (
     cna_ranges,
     cves,
     exploited_vulnerabilities,
     nvd_ranges,
+    product_spellings,
     source_states,
     unreadable_cves,
 )
 
 KEV_SOURCE = "kev"
 NVD_SOURCE = "nvd"
-MIGRATION_HINT = "`uv run alembic upgrade head` を流したか確かめる"
 
 
 class SqlAdvisoryStore:
@@ -166,6 +167,37 @@ class SqlAdvisoryStore:
                 stored = _stored_release(connection, NVD_SOURCE)
                 newest = released if stored is None else max(stored, released)
                 _record_state(connection, NVD_SOURCE, kind.value, newest, synced_at)
+        except DBAPIError as error:
+            raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
+
+    def rebuild_product_names(self) -> int:
+        try:
+            with self._writer.begin() as connection:
+                rows = []
+                for source, table in (("nvd", nvd_ranges), ("cna", cna_ranges)):
+                    for vendor, product, cve_count in connection.execute(
+                        select(
+                            table.c.vendor, table.c.product, func.count(distinct(table.c.cve_id))
+                        )
+                        .where(table.c.vendor.is_not(None), table.c.product.is_not(None))
+                        .group_by(table.c.vendor, table.c.product)
+                    ):
+                        vendor_part, product_part = vendor_key(vendor), name_key(product)
+                        if vendor_part and product_part:
+                            rows.append(
+                                {
+                                    "source": source,
+                                    "vendor": vendor,
+                                    "product": product,
+                                    "vendor_key": vendor_part,
+                                    "product_key": product_part,
+                                    "cve_count": cve_count,
+                                }
+                            )
+                connection.execute(delete(product_spellings))
+                if rows:
+                    connection.execute(insert(product_spellings), rows)
+                return len(rows)
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
 
