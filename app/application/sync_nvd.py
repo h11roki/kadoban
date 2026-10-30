@@ -15,7 +15,7 @@ from app.application.ports import (
 ALL_FEEDS_AFTER = timedelta(days=7)
 UNREADABLE_SHARE_LIMIT = 0.01
 UNREADABLE_COUNT_FLOOR = 20
-WRITE_BATCH = 1_000
+WRITE_BATCH = 500
 
 
 @dataclass(frozen=True)
@@ -24,12 +24,6 @@ class NvdFeedSyncResult:
     read: int
     written: int
     unreadable: tuple[UnreadableRecord, ...]
-
-
-@dataclass(frozen=True)
-class NvdSyncResult:
-    kind: NvdSyncKind
-    feeds: tuple[NvdFeedSyncResult, ...]
 
 
 class SyncNvd:
@@ -45,7 +39,7 @@ class SyncNvd:
         self._now = now
         self._on_feed = on_feed
 
-    def run(self) -> NvdSyncResult:
+    def run(self) -> NvdSyncKind:
         started = self._now()
         released = self._store.nvd_released_at()
         if released is None or started - released > ALL_FEEDS_AFTER:
@@ -54,7 +48,6 @@ class SyncNvd:
         else:
             kind = NvdSyncKind.RECENT_CHANGES
             feeds = iter([self._source.recent_changes()])
-        results = []
         covered: datetime | None = None
         for feed in feeds:
             read = written = 0
@@ -62,21 +55,18 @@ class SyncNvd:
             for batch in batched(feed.records(), WRITE_BATCH, strict=False):
                 read += len(batch)
                 readable = [record for record in batch if isinstance(record, AdvisoryRecord)]
-                skipped = [record for record in batch if isinstance(record, UnreadableRecord)]
+                unreadable += [record for record in batch if isinstance(record, UnreadableRecord)]
                 if readable:
                     written += self._store.write_advisories(readable)
-                if skipped:
-                    self._store.record_unreadable(skipped, seen_at=started)
-                    unreadable += skipped
             if len(unreadable) > max(UNREADABLE_COUNT_FLOOR, read * UNREADABLE_SHARE_LIMIT):
                 raise AdvisorySourceError(
                     f"NVD の {feed.name} の {len(unreadable):,} / {read:,} 件が読めず、"
                     f"形が変わっているので止める。最初の理由: {unreadable[0].reason}"
                 )
-            result = NvdFeedSyncResult(feed.name, read, written, tuple(unreadable))
-            self._on_feed(result)
-            results.append(result)
+            if unreadable:
+                self._store.record_unreadable(unreadable, seen_at=started)
+            self._on_feed(NvdFeedSyncResult(feed.name, read, written, tuple(unreadable)))
             covered = feed.last_modified if covered is None else min(covered, feed.last_modified)
         if covered is not None:
             self._store.record_nvd_sync(kind, released=covered, synced_at=started)
-        return NvdSyncResult(kind, tuple(results))
+        return kind

@@ -36,6 +36,7 @@ class AdvisoryRecord:
 @dataclass(frozen=True)
 class UnreadableRecord:
     cve_id: str | None
+    last_modified: datetime | None
     reason: str
 
 

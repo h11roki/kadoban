@@ -1,8 +1,9 @@
 import gzip
 import hashlib
 import json
+import time
 import zlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ FEED_BASE_URL = "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-"
 FIRST_FEED_YEAR = 2002
 RECENT_CHANGES_FEED = "modified"
 DOWNLOAD_ATTEMPTS = 3
+RETRY_WAIT_SECONDS = 30
 READ_CHUNK = 1 << 20
 CPE_FIELDS = 13
 REASON_LENGTH = 300
@@ -107,11 +109,7 @@ class NvdFeedFile:
                     try:
                         advisory = _advisory(item)
                     except ValueError as error:
-                        cve_id = item.get("id") if isinstance(item, dict) else None
-                        yield UnreadableRecord(
-                            cve_id if isinstance(cve_id, str) else None,
-                            " ".join(str(error).split())[:REASON_LENGTH],
-                        )
+                        yield _unreadable(item, error)
                         continue
                     yield AdvisoryRecord(
                         advisory,
@@ -122,10 +120,17 @@ class NvdFeedFile:
 
 
 class NvdFeedFiles:
-    def __init__(self, client: httpx.Client, directory: Path, this_year: int) -> None:
+    def __init__(
+        self,
+        client: httpx.Client,
+        directory: Path,
+        this_year: int,
+        wait: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._client = client
         self._directory = directory
         self._this_year = this_year
+        self._wait = wait
 
     def all_feeds(self) -> Iterator[NvdFeedFile]:
         for year in range(FIRST_FEED_YEAR, self._this_year + 1):
@@ -213,16 +218,18 @@ class NvdFeedFiles:
                     with part.open("ab") as file:
                         for chunk in response.iter_raw(READ_CHUNK):
                             file.write(chunk)
-            except httpx.HTTPStatusError as error:
-                part.unlink(missing_ok=True)
-                etag.unlink(missing_ok=True)
-                if attempt == DOWNLOAD_ATTEMPTS:
-                    raise AdvisorySourceError(f"NVD の {name} を取れなかった: {error}") from error
             except httpx.HTTPError as error:
+                if (
+                    isinstance(error, httpx.HTTPStatusError)
+                    and error.response.status_code == httpx.codes.REQUESTED_RANGE_NOT_SATISFIABLE
+                ):
+                    part.unlink(missing_ok=True)
+                    etag.unlink(missing_ok=True)
                 if attempt == DOWNLOAD_ATTEMPTS:
                     raise AdvisorySourceError(
-                        f"NVD の {name} を {attempt} 回続きから取っても取り切れなかった: {error}"
+                        f"NVD の {name} を {attempt} 回取り直しても取り切れなかった: {error}"
                     ) from error
+                self._wait(RETRY_WAIT_SECONDS * attempt)
             else:
                 part.replace(path)
                 etag.unlink(missing_ok=True)
@@ -297,6 +304,20 @@ def _advisory(item: object) -> Advisory:
             for data in affected.affected_data
             for version in (data.versions or [_AffectedVersion()])
         ),
+    )
+
+
+def _unreadable(item: object, error: ValueError) -> UnreadableRecord:
+    fields = item if isinstance(item, dict) else {}
+    cve_id = fields.get("id")
+    try:
+        last_modified: datetime | None = _utc(datetime.fromisoformat(fields["lastModified"]))
+    except (KeyError, TypeError, ValueError):
+        last_modified = None
+    return UnreadableRecord(
+        cve_id if isinstance(cve_id, str) else None,
+        last_modified,
+        " ".join(str(error).split())[:REASON_LENGTH],
     )
 
 

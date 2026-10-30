@@ -168,13 +168,37 @@ def test_unreadable_cves_are_kept_until_a_readable_version_replaces_them(engine:
 
     store.record_unreadable(
         [
-            UnreadableRecord("CVE-2024-21762", "CPE の形が変わっている"),
-            UnreadableRecord(None, "id が無い"),
-            UnreadableRecord("CVE-2024-21762", "2 度目"),
+            UnreadableRecord("CVE-2024-21762", TUESDAY, "CPE の形が変わっている"),
+            UnreadableRecord(None, None, "id が無い"),
+            UnreadableRecord("CVE-2024-21762", None, "2 度目"),
         ],
         seen_at=TUESDAY,
     )
     assert unreadable_ids(engine) == ["CVE-2024-21762"]
 
     store.write_advisories([record("CVE-2024-21762", TUESDAY)])
+    assert unreadable_ids(engine) == []
+
+
+def test_an_unreadable_version_older_than_the_stored_one_is_not_marked(engine: Engine) -> None:
+    store = SqlAdvisoryStore(engine)
+    store.write_advisories([record("CVE-2024-21762", TUESDAY)])
+
+    store.record_unreadable(
+        [UnreadableRecord("CVE-2024-21762", MONDAY, "古い年のファイルの版")], seen_at=TUESDAY
+    )
+
+    assert unreadable_ids(engine) == []
+
+
+def test_reading_the_stored_version_again_clears_its_mark(engine: Engine) -> None:
+    store = SqlAdvisoryStore(engine)
+    store.write_advisories([record("CVE-2024-21762", MONDAY)])
+    store.record_unreadable(
+        [UnreadableRecord("CVE-2024-21762", None, "読み方を直す前")], seen_at=TUESDAY
+    )
+
+    written = store.write_advisories([record("CVE-2024-21762", MONDAY)])
+
+    assert written == 0
     assert unreadable_ids(engine) == []

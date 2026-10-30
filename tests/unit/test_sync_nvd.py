@@ -27,7 +27,7 @@ def record(number: int) -> AdvisoryRecord:
 
 
 def unreadable(number: int) -> UnreadableRecord:
-    return UnreadableRecord(f"CVE-2026-9{number:04}", "vulnStatus が無い")
+    return UnreadableRecord(f"CVE-2026-9{number:04}", None, "vulnStatus が無い")
 
 
 @dataclass
@@ -100,10 +100,10 @@ def test_all_feeds_are_read_when_the_copy_is_missing_or_older_than_seven_days(
     store = CountingStore(released_at)
     sync_nvd, reported = sync(feeds, store)
 
-    result = sync_nvd.run()
+    kind = sync_nvd.run()
 
     assert feeds.asked == ["all"]
-    assert result.kind is NvdSyncKind.ALL
+    assert kind is NvdSyncKind.ALL
     assert reported == [
         NvdFeedSyncResult("2002", 1, 1, ()),
         NvdFeedSyncResult("2003", 2, 2, ()),
@@ -124,10 +124,10 @@ def test_only_recent_changes_are_read_while_the_copy_is_within_seven_days() -> N
     store = CountingStore(NOW - timedelta(days=7))
     sync_nvd, reported = sync(feeds, store)
 
-    result = sync_nvd.run()
+    kind = sync_nvd.run()
 
     assert feeds.asked == ["recent"]
-    assert result.kind is NvdSyncKind.RECENT_CHANGES
+    assert kind is NvdSyncKind.RECENT_CHANGES
     assert reported == [NvdFeedSyncResult("modified", 1, 1, ())]
     assert store.recorded == [(NvdSyncKind.RECENT_CHANGES, FEED_MODIFIED, NOW)]
 
@@ -140,8 +140,8 @@ def test_records_are_written_in_batches_and_unchanged_ones_are_not_counted() -> 
 
     sync_nvd.run()
 
-    assert store.batches == [1_000, 1_000, 500]
-    assert reported == [NvdFeedSyncResult("modified", 2_500, 2_200, ())]
+    assert store.batches == [500, 500, 500, 500, 500]
+    assert reported == [NvdFeedSyncResult("modified", 2_500, 2_000, ())]
 
 
 def test_unreadable_records_are_skipped_kept_in_the_store_and_reported() -> None:

@@ -50,7 +50,7 @@ def sync_advisories() -> None:
     source_failed = False
     try:
         with ExitStack() as resources:
-            resources.enter_context(exclusive_sync(settings.data_dir.resolve()))
+            resources.enter_context(exclusive_sync(settings.data_dir))
             engine = create_sqlite_engine(settings.database_path)
             resources.callback(engine.dispose)
             client = resources.enter_context(
@@ -78,19 +78,15 @@ def sync_advisories() -> None:
                         )
             feeds = NvdFeedFiles(client, settings.nvd_feed_dir, this_year=now().year)
             try:
-                nvd = SyncNvd(feeds, store, now=now, on_feed=echo_nvd_feed).run()
+                nvd_kind = SyncNvd(feeds, store, now=now, on_feed=echo_nvd_feed).run()
             except AdvisorySourceError as error:
                 typer.echo(str(error), err=True)
                 source_failed = True
             else:
-                scope = "全件" if nvd.kind is NvdSyncKind.ALL else "直近 8 日の更新分"
+                scope = "全件" if nvd_kind is NvdSyncKind.ALL else "直近 8 日の更新分"
                 typer.echo(f"NVD: {scope}を取り込んだ")
     except ReplicaError as error:
-        typer.echo(
-            f"{error}\n`uv run alembic upgrade head` を流したか、"
-            "ほかの取り込みが動いていないか確かめる",
-            err=True,
-        )
+        typer.echo(str(error), err=True)
         raise typer.Exit(1) from error
     if source_failed:
         raise typer.Exit(1)

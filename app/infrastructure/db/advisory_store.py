@@ -27,6 +27,7 @@ from app.infrastructure.db.tables import (
 
 KEV_SOURCE = "kev"
 NVD_SOURCE = "nvd"
+MIGRATION_HINT = "`uv run alembic upgrade head` を流したか確かめる"
 
 
 class SqlAdvisoryStore:
@@ -52,14 +53,14 @@ class SqlAdvisoryStore:
                 _record_state(connection, KEV_SOURCE, catalog.version, catalog.released, synced_at)
                 return CatalogReplacement.REPLACED
         except DBAPIError as error:
-            raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
+            raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
 
     def nvd_released_at(self) -> datetime | None:
         try:
             with self._engine.connect() as connection:
                 return _stored_release(connection, NVD_SOURCE)
         except DBAPIError as error:
-            raise ReplicaError(f"手元の DB を読めない: {error.orig}") from error
+            raise ReplicaError(f"手元の DB を読めない({error.orig})。{MIGRATION_HINT}") from error
 
     def write_advisories(self, records: Sequence[AdvisoryRecord]) -> int:
         latest: dict[str, AdvisoryRecord] = {}
@@ -75,16 +76,21 @@ class SqlAdvisoryStore:
                         select(cves.c.cve_id, cves.c.last_modified).where(cves.c.cve_id.in_(latest))
                     )
                 }
-                fresh = [
-                    record
-                    for cve_id, record in latest.items()
-                    if cve_id not in stored
-                    or _timestamp(record.advisory.last_modified) > stored[cve_id]
-                ]
+                fresh: list[AdvisoryRecord] = []
+                readable_ids: list[str] = []
+                for cve_id, record in latest.items():
+                    modified = _timestamp(record.advisory.last_modified)
+                    if cve_id not in stored or modified >= stored[cve_id]:
+                        readable_ids.append(cve_id)
+                    if cve_id not in stored or modified > stored[cve_id]:
+                        fresh.append(record)
+                connection.execute(
+                    delete(unreadable_cves).where(unreadable_cves.c.cve_id.in_(readable_ids))
+                )
                 if not fresh:
                     return 0
                 fresh_ids = [record.advisory.cve_id for record in fresh]
-                for table in (cves, nvd_ranges, cna_ranges, unreadable_cves):
+                for table in (cves, nvd_ranges, cna_ranges):
                     connection.execute(delete(table).where(table.c.cve_id.in_(fresh_ids)))
                 connection.execute(
                     insert(cves),
@@ -115,22 +121,31 @@ class SqlAdvisoryStore:
                     connection.execute(insert(cna_ranges), cna_rows)
                 return len(fresh)
         except DBAPIError as error:
-            raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
+            raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
 
     def record_unreadable(self, records: Sequence[UnreadableRecord], seen_at: datetime) -> None:
-        rows = {
-            record.cve_id: {
-                "cve_id": record.cve_id,
-                "reason": record.reason,
-                "seen_at": _timestamp(seen_at),
-            }
-            for record in records
-            if record.cve_id is not None
-        }
-        if not rows:
+        identified = {record.cve_id: record for record in records if record.cve_id is not None}
+        if not identified:
             return
         try:
             with self._writer.begin() as connection:
+                stored: dict[str, str] = {
+                    cve_id: last_modified
+                    for cve_id, last_modified in connection.execute(
+                        select(cves.c.cve_id, cves.c.last_modified).where(
+                            cves.c.cve_id.in_(identified)
+                        )
+                    )
+                }
+                rows = [
+                    {"cve_id": cve_id, "reason": record.reason, "seen_at": _timestamp(seen_at)}
+                    for cve_id, record in identified.items()
+                    if cve_id not in stored
+                    or record.last_modified is None
+                    or _timestamp(record.last_modified) > stored[cve_id]
+                ]
+                if not rows:
+                    return
                 statement = sqlite_insert(unreadable_cves)
                 connection.execute(
                     statement.on_conflict_do_update(
@@ -140,10 +155,10 @@ class SqlAdvisoryStore:
                             "seen_at": statement.excluded.seen_at,
                         },
                     ),
-                    list(rows.values()),
+                    rows,
                 )
         except DBAPIError as error:
-            raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
+            raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
 
     def record_nvd_sync(self, kind: NvdSyncKind, released: datetime, synced_at: datetime) -> None:
         try:
@@ -152,7 +167,7 @@ class SqlAdvisoryStore:
                 newest = released if stored is None else max(stored, released)
                 _record_state(connection, NVD_SOURCE, kind.value, newest, synced_at)
         except DBAPIError as error:
-            raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
+            raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
 
 
 def _timestamp(moment: datetime) -> str:
