@@ -11,7 +11,7 @@ class NvdRange:
     start_excluding: str | None
     end_including: str | None
     end_excluding: str | None
-    on_platform: bool
+    conditional: bool
 
 
 @dataclass(frozen=True)

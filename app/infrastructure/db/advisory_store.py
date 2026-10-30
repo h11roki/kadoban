@@ -47,10 +47,10 @@ class SqlAdvisoryStore:
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB に書けない: {error.orig}") from error
 
-    def nvd_synced_at(self) -> datetime | None:
+    def nvd_released_at(self) -> datetime | None:
         try:
             with self._engine.connect() as connection:
-                return _stored_time(connection, NVD_SOURCE, source_states.c.synced_at)
+                return _stored_time(connection, NVD_SOURCE, source_states.c.released_at)
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB を読めない: {error.orig}") from error
 

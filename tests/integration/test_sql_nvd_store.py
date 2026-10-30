@@ -23,7 +23,7 @@ def fortios_range(end_excluding: str) -> NvdRange:
         start_excluding=None,
         end_including=None,
         end_excluding=end_excluding,
-        on_platform=False,
+        conditional=False,
     )
 
 
@@ -128,9 +128,9 @@ def test_the_latest_of_duplicates_in_one_batch_wins(engine: Engine) -> None:
     assert rows(engine)["nvd"] == [("CVE-2024-21762", "7.0.15")]
 
 
-def test_the_nvd_sync_time_is_recorded_and_read_back(engine: Engine) -> None:
+def test_the_freshness_of_the_nvd_copy_is_recorded_and_read_back(engine: Engine) -> None:
     store = SqlAdvisoryStore(engine)
-    assert store.nvd_synced_at() is None
+    assert store.nvd_released_at() is None
 
     store.record_nvd_sync(NvdSyncKind.RECENT_CHANGES, released=MONDAY, synced_at=TUESDAY)
 
@@ -138,5 +138,5 @@ def test_the_nvd_sync_time_is_recorded_and_read_back(engine: Engine) -> None:
         state = connection.execute(
             select(source_states).where(source_states.c.source == "nvd")
         ).one()
-    assert store.nvd_synced_at() == TUESDAY
+    assert store.nvd_released_at() == MONDAY
     assert state.version == "recent_changes"

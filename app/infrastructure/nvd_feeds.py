@@ -1,7 +1,6 @@
 import gzip
 import hashlib
 import json
-import re
 import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -10,9 +9,14 @@ from pathlib import Path
 
 import httpx
 import ijson
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.application.ports import AdvisoryRecord, AdvisorySourceError
+from app.application.ports import (
+    AdvisoryRecord,
+    AdvisorySourceError,
+    ReplicaError,
+    UnreadableRecord,
+)
 from app.domain.advisory import Advisory, CnaRange, NvdRange
 
 FEED_BASE_URL = "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-"
@@ -20,8 +24,8 @@ FIRST_FEED_YEAR = 2002
 RECENT_CHANGES_FEED = "modified"
 DOWNLOAD_ATTEMPTS = 3
 READ_CHUNK = 1 << 20
-UNESCAPED_COLON = re.compile(r"(?<!\\):")
-ESCAPE = re.compile(r"\\(.)")
+CPE_FIELDS = 13
+REASON_LENGTH = 300
 
 
 class _Model(BaseModel):
@@ -38,12 +42,20 @@ class _CpeMatch(_Model):
 
 
 class _Node(_Model):
+    operator: str | None = None
+    negate: bool = False
     cpe_match: list[_CpeMatch] = Field(default_factory=list, alias="cpeMatch")
 
 
 class _Configuration(_Model):
     operator: str | None = None
     nodes: list[_Node]
+
+    @property
+    def conditional(self) -> bool:
+        return self.operator == "AND" or any(
+            node.negate or node.operator == "AND" for node in self.nodes
+        )
 
 
 class _AffectedVersion(_Model):
@@ -79,6 +91,7 @@ class _Cve(_Model):
 class _Meta:
     last_modified: datetime
     sha256: str
+    gz_size: int
 
 
 @dataclass(frozen=True)
@@ -87,15 +100,22 @@ class NvdFeedFile:
     last_modified: datetime
     path: Path
 
-    def records(self) -> Iterator[AdvisoryRecord]:
+    def records(self) -> Iterator[AdvisoryRecord | UnreadableRecord]:
         try:
             with gzip.open(self.path, "rb") as file:
                 for item in ijson.items(file, "vulnerabilities.item.cve", use_float=True):
+                    try:
+                        advisory = _advisory(item)
+                    except ValueError as error:
+                        cve_id = item.get("id") if isinstance(item, dict) else None
+                        yield UnreadableRecord(
+                            cve_id if isinstance(cve_id, str) else None,
+                            " ".join(str(error).split())[:REASON_LENGTH],
+                        )
+                        continue
                     yield AdvisoryRecord(
-                        advisory=_advisory(self.name, item),
-                        original_json=json.dumps(
-                            item, ensure_ascii=False, separators=(",", ":")
-                        ).encode(),
+                        advisory,
+                        json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode(),
                     )
         except (OSError, EOFError, zlib.error, ijson.JSONError) as error:
             raise AdvisorySourceError(f"NVD の {self.name} を読めない: {error}") from error
@@ -109,38 +129,63 @@ class NvdFeedFiles:
 
     def all_feeds(self) -> Iterator[NvdFeedFile]:
         for year in range(FIRST_FEED_YEAR, self._this_year + 1):
-            yield self._fetch(str(year))
+            feed = self._fetch(str(year))
+            if feed is not None:
+                yield feed
+            elif year != self._this_year:
+                raise AdvisorySourceError(f"NVD に {year} 年の一括ファイルが無い")
 
     def recent_changes(self) -> NvdFeedFile:
-        return self._fetch(RECENT_CHANGES_FEED)
+        feed = self._fetch(RECENT_CHANGES_FEED)
+        if feed is None:
+            raise AdvisorySourceError("NVD に更新分のファイルが無い")
+        return feed
 
-    def _fetch(self, name: str) -> NvdFeedFile:
-        path = self._directory / f"nvdcve-2.0-{name}.json.gz"
+    def _fetch(self, name: str) -> NvdFeedFile | None:
         meta = self._meta(name)
-        if path.exists() and _content_sha256(path) == meta.sha256:
-            return NvdFeedFile(name, meta.last_modified, path)
-        for _ in range(DOWNLOAD_ATTEMPTS):
-            path.unlink(missing_ok=True)
-            self._download(name, path)
-            if _content_sha256(path) == meta.sha256:
+        if meta is None:
+            return None
+        path = self._directory / f"nvdcve-2.0-{name}.json.gz"
+        try:
+            if path.exists() and _matches(path, meta):
                 return NvdFeedFile(name, meta.last_modified, path)
-            meta = self._meta(name)
-        path.unlink(missing_ok=True)
+            for _ in range(DOWNLOAD_ATTEMPTS):
+                _remove(path)
+                self._download(name, path)
+                if _matches(path, meta):
+                    return NvdFeedFile(name, meta.last_modified, path)
+                fresh_meta = self._meta(name)
+                if fresh_meta is None:
+                    return None
+                meta = fresh_meta
+            _remove(path)
+        except OSError as error:
+            raise ReplicaError(
+                f"NVD のファイルの置き場 {self._directory} を使えない: {error}"
+            ) from error
         raise AdvisorySourceError(
             f"NVD の {name} を {DOWNLOAD_ATTEMPTS} 回取り直しても .meta の sha256 と合わない"
         )
 
-    def _meta(self, name: str) -> _Meta:
+    def _meta(self, name: str) -> _Meta | None:
         try:
             response = self._client.get(f"{FEED_BASE_URL}{name}.meta")
+            if response.status_code == httpx.codes.NOT_FOUND:
+                return None
             response.raise_for_status()
         except httpx.HTTPError as error:
             raise AdvisorySourceError(f"NVD の {name} の .meta を取れなかった: {error}") from error
-        fields = dict(line.split(":", 1) for line in response.text.splitlines() if ":" in line)
+        fields = {
+            key.strip(): value.strip()
+            for key, value in (
+                line.split(":", 1) for line in response.text.splitlines() if ":" in line
+            )
+        }
         try:
             return _Meta(
-                last_modified=datetime.fromisoformat(fields["lastModifiedDate"].strip()),
-                sha256=fields["sha256"].strip().lower(),
+                last_modified=datetime.fromisoformat(fields["lastModifiedDate"]),
+                sha256=fields["sha256"].lower(),
+                gz_size=int(fields["gzSize"]),
             )
         except (KeyError, ValueError) as error:
             raise AdvisorySourceError(
@@ -152,9 +197,9 @@ class NvdFeedFiles:
         part = path.with_name(f"{path.name}.part")
         etag = path.with_name(f"{path.name}.etag")
         for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
-            headers = {}
+            headers = {"Accept-Encoding": "identity"}
             if part.exists() and etag.exists():
-                headers = {"Range": f"bytes={part.stat().st_size}-", "If-Range": etag.read_text()}
+                headers |= {"Range": f"bytes={part.stat().st_size}-", "If-Range": etag.read_text()}
             try:
                 with self._client.stream(
                     "GET", f"{FEED_BASE_URL}{name}.json.gz", headers=headers
@@ -166,14 +211,14 @@ class NvdFeedFiles:
                         if "etag" in response.headers:
                             etag.write_text(response.headers["etag"])
                     with part.open("ab") as file:
-                        for chunk in response.iter_bytes(READ_CHUNK):
+                        for chunk in response.iter_raw(READ_CHUNK):
                             file.write(chunk)
             except httpx.HTTPStatusError as error:
                 part.unlink(missing_ok=True)
                 etag.unlink(missing_ok=True)
                 if attempt == DOWNLOAD_ATTEMPTS:
                     raise AdvisorySourceError(f"NVD の {name} を取れなかった: {error}") from error
-            except httpx.TransportError as error:
+            except httpx.HTTPError as error:
                 if attempt == DOWNLOAD_ATTEMPTS:
                     raise AdvisorySourceError(
                         f"NVD の {name} を {attempt} 回続きから取っても取り切れなかった: {error}"
@@ -184,22 +229,38 @@ class NvdFeedFiles:
                 return
 
 
-def _content_sha256(path: Path) -> str | None:
+def _checked(path: Path) -> Path:
+    return path.with_name(f"{path.name}.sha256")
+
+
+def _remove(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    _checked(path).unlink(missing_ok=True)
+
+
+def _matches(path: Path, meta: _Meta) -> bool:
+    checked = _checked(path)
+    if (
+        checked.exists()
+        and checked.read_text() == meta.sha256
+        and path.stat().st_size == meta.gz_size
+    ):
+        return True
     digest = hashlib.sha256()
     try:
         with gzip.open(path, "rb") as file:
             while chunk := file.read(READ_CHUNK):
                 digest.update(chunk)
-    except (OSError, EOFError, zlib.error):
-        return None
-    return digest.hexdigest()
+    except (EOFError, zlib.error, gzip.BadGzipFile):
+        return False
+    if digest.hexdigest() != meta.sha256:
+        return False
+    checked.write_text(meta.sha256)
+    return True
 
 
-def _advisory(feed: str, item: object) -> Advisory:
-    try:
-        cve = _Cve.model_validate(item)
-    except ValidationError as error:
-        raise AdvisorySourceError(f"NVD の {feed} の CVE の形が変わっている: {error}") from error
+def _advisory(item: object) -> Advisory:
+    cve = _Cve.model_validate(item)
     return Advisory(
         cve_id=cve.id,
         published=_utc(cve.published),
@@ -212,10 +273,11 @@ def _advisory(feed: str, item: object) -> Advisory:
                 start_excluding=match.start_excluding,
                 end_including=match.end_including,
                 end_excluding=match.end_excluding,
-                on_platform=configuration.operator == "AND",
+                conditional=configuration.conditional,
             )
             for configuration in cve.configurations
             for node in configuration.nodes
+            if not node.negate
             for match in node.cpe_match
             if match.vulnerable
         ),
@@ -243,7 +305,18 @@ def _utc(moment: datetime) -> datetime:
 
 
 def _vendor_product_version(criteria: str) -> tuple[str, str, str]:
-    parts = [ESCAPE.sub(r"\1", part) for part in UNESCAPED_COLON.split(criteria)]
-    if len(parts) != 13 or parts[:2] != ["cpe", "2.3"]:
-        raise AdvisorySourceError(f"NVD の CPE の形が変わっている: {criteria!r}")
-    return parts[3], parts[4], parts[5]
+    fields = [""]
+    escaped = False
+    for character in criteria:
+        if escaped:
+            fields[-1] += character
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == ":":
+            fields.append("")
+        else:
+            fields[-1] += character
+    if escaped or len(fields) != CPE_FIELDS or fields[:2] != ["cpe", "2.3"]:
+        raise ValueError(f"CPE の形が変わっている: {criteria!r}")
+    return fields[3], fields[4], fields[5]

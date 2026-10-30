@@ -28,6 +28,13 @@ app.add_typer(advisories, name="advisories")
 
 def echo_nvd_feed(result: NvdFeedSyncResult) -> None:
     typer.echo(f"NVD {result.name}: {result.read:,} 件を読み、{result.written:,} 件を書いた")
+    if result.unreadable:
+        examples = ", ".join(record.cve_id or "ID 不明" for record in result.unreadable[:5])
+        typer.echo(
+            f"NVD {result.name}: {len(result.unreadable):,} 件は形が読めず飛ばした"
+            f"({examples} など)。最初の理由: {result.unreadable[0].reason}",
+            err=True,
+        )
 
 
 @advisories.command("sync", help="CISA KEV と NVD を取り込む")

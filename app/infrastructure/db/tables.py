@@ -54,7 +54,7 @@ nvd_ranges = Table(
     Column("start_excluding", String),
     Column("end_including", String),
     Column("end_excluding", String),
-    Column("on_platform", Boolean, nullable=False),
+    Column("conditional", Boolean, nullable=False),
     Index("ix_nvd_ranges_vendor_product", "vendor", "product"),
 )
 

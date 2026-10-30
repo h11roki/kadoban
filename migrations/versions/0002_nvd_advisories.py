@@ -49,7 +49,7 @@ def upgrade() -> None:
         sa.Column("start_excluding", sa.String(), nullable=True),
         sa.Column("end_including", sa.String(), nullable=True),
         sa.Column("end_excluding", sa.String(), nullable=True),
-        sa.Column("on_platform", sa.Boolean(), nullable=False),
+        sa.Column("conditional", sa.Boolean(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     with op.batch_alter_table("nvd_ranges", schema=None) as batch_op:

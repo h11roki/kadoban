@@ -33,6 +33,12 @@ class AdvisoryRecord:
     original_json: bytes
 
 
+@dataclass(frozen=True)
+class UnreadableRecord:
+    cve_id: str | None
+    reason: str
+
+
 class ExploitedCatalogSource(Protocol):
     def fetch(self) -> ExploitedCatalog: ...
 
@@ -50,7 +56,7 @@ class NvdFeed(Protocol):
     @property
     def last_modified(self) -> datetime: ...
 
-    def records(self) -> Iterator[AdvisoryRecord]: ...
+    def records(self) -> Iterator[AdvisoryRecord | UnreadableRecord]: ...
 
 
 class NvdFeedSource(Protocol):
@@ -60,7 +66,7 @@ class NvdFeedSource(Protocol):
 
 
 class AdvisoryStore(Protocol):
-    def nvd_synced_at(self) -> datetime | None: ...
+    def nvd_released_at(self) -> datetime | None: ...
 
     def write_advisories(self, records: Sequence[AdvisoryRecord]) -> int: ...
 
