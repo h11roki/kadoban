@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.application.list_products import ListProducts
 from app.application.ports import InvalidRequest
 from app.application.register_product import RegisterProduct
 from app.application.search_products import ProductCandidate, SearchProducts
@@ -118,5 +119,20 @@ def test_a_product_with_a_key_missing_from_the_index_is_refused() -> None:
 
 def test_a_japanese_call_with_no_hits_is_searched_again_by_its_ascii_part() -> None:
     candidates = SearchProducts(INDEX, ListedAliases([])).run("フォーティ fortiproxy")
+
+    assert [candidate.keys for candidate in candidates] == [(FORTIPROXY,)]
+
+
+def test_listing_finds_the_company_however_its_name_was_typed() -> None:
+    ledger = RecordingLedger()
+    ledger.add(
+        Product("Acme 工業", "本社の FortiGate", (FORTIOS,), None, ProductRole.VPN, None), NOW
+    )
+
+    assert [entry.id for entry in ListProducts(ledger).run(" Ａｃｍｅ  工業 ")] == [1]
+
+
+def test_a_japanese_call_is_searched_again_by_each_ascii_word_longest_first() -> None:
+    candidates = SearchProducts(INDEX, ListedAliases([])).run("ヤマハ fortiproxy の 2 台目")
 
     assert [candidate.keys for candidate in candidates] == [(FORTIPROXY,)]

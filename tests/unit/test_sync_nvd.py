@@ -77,9 +77,8 @@ class CountingStore:
     def record_nvd_sync(self, kind: NvdSyncKind, released: datetime, synced_at: datetime) -> None:
         self.recorded.append((kind, released, synced_at))
 
-    def rebuild_product_names(self) -> int:
+    def rebuild_product_names(self) -> None:
         self.rebuilds += 1
-        return 0
 
 
 def source() -> ListedSource:
@@ -189,4 +188,14 @@ def test_many_unreadable_records_mean_the_format_changed_and_the_sync_stops() ->
         sync_nvd.run()
 
     assert store.recorded == []
-    assert store.rebuilds == 0
+    assert store.rebuilds == 1
+
+
+def test_the_product_index_is_not_rebuilt_when_nothing_was_written() -> None:
+    feeds = source()
+    store = CountingStore(NOW - timedelta(days=1), already_stored=1)
+    sync_nvd, _ = sync(feeds, store)
+
+    sync_nvd.run()
+
+    assert (len(store.recorded), store.rebuilds) == (1, 0)

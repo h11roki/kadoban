@@ -1,8 +1,9 @@
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
+from app.application.ports import ConfigurationError
 from app.domain.product import Alias, NameKey
 
 ALIASES_PATH = Path(__file__).with_name("product_aliases.toml")
@@ -26,8 +27,8 @@ class TomlAliasBook:
                 Alias(entry.name, tuple(entry.calls), tuple(map(NameKey.parse, entry.keys)))
                 for entry in entries.alias
             )
-        except (OSError, tomllib.TOMLDecodeError, ValidationError, ValueError) as error:
-            raise ValueError(f"別名表 {path} を読めない: {error}") from error
+        except (OSError, tomllib.TOMLDecodeError, ValueError) as error:
+            raise ConfigurationError(f"別名表 {path} を読めない: {error}") from error
 
     def answering_to(self, query_key: str) -> list[Alias]:
         return [alias for alias in self._aliases if alias.answers_to(query_key)]

@@ -49,25 +49,32 @@ class SyncNvd:
             kind = NvdSyncKind.RECENT_CHANGES
             feeds = iter([self._source.recent_changes()])
         newest: datetime | None = None
-        for feed in feeds:
-            read = written = 0
-            unreadable: list[UnreadableRecord] = []
-            for batch in batched(feed.records(), WRITE_BATCH, strict=False):
-                read += len(batch)
-                readable = [record for record in batch if isinstance(record, AdvisoryRecord)]
-                unreadable += [record for record in batch if isinstance(record, UnreadableRecord)]
-                if readable:
-                    written += self._store.write_advisories(readable)
-            if len(unreadable) > max(UNREADABLE_COUNT_FLOOR, read * UNREADABLE_SHARE_LIMIT):
-                raise AdvisorySourceError(
-                    f"NVD の {feed.name} の {len(unreadable):,} / {read:,} 件が読めず、"
-                    f"形が変わっているので止める。最初の理由: {unreadable[0].reason}"
-                )
-            if unreadable:
-                self._store.record_unreadable(unreadable, seen_at=started)
-            self._on_feed(NvdFeedSyncResult(feed.name, read, written, tuple(unreadable)))
-            newest = feed.last_modified if newest is None else max(newest, feed.last_modified)
+        written_in_all_feeds = 0
+        try:
+            for feed in feeds:
+                read = written = 0
+                unreadable: list[UnreadableRecord] = []
+                for batch in batched(feed.records(), WRITE_BATCH, strict=False):
+                    read += len(batch)
+                    readable = [record for record in batch if isinstance(record, AdvisoryRecord)]
+                    unreadable += [
+                        record for record in batch if isinstance(record, UnreadableRecord)
+                    ]
+                    if readable:
+                        written += self._store.write_advisories(readable)
+                written_in_all_feeds += written
+                if len(unreadable) > max(UNREADABLE_COUNT_FLOOR, read * UNREADABLE_SHARE_LIMIT):
+                    raise AdvisorySourceError(
+                        f"NVD の {feed.name} の {len(unreadable):,} / {read:,} 件が読めず、"
+                        f"形が変わっているので止める。最初の理由: {unreadable[0].reason}"
+                    )
+                if unreadable:
+                    self._store.record_unreadable(unreadable, seen_at=started)
+                self._on_feed(NvdFeedSyncResult(feed.name, read, written, tuple(unreadable)))
+                newest = feed.last_modified if newest is None else max(newest, feed.last_modified)
+        finally:
+            if written_in_all_feeds:
+                self._store.rebuild_product_names()
         if newest is not None:
-            self._store.rebuild_product_names()
             self._store.record_nvd_sync(kind, released=newest, synced_at=started)
         return kind

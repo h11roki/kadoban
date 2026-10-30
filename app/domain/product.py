@@ -6,11 +6,15 @@ from enum import StrEnum
 
 NOT_IN_A_KEY = re.compile(r"[^0-9a-z぀-ヿ一-鿿]")
 KEY_WORD = re.compile(r"[0-9a-z぀-ヿ一-鿿]+")
-NOT_ASCII = re.compile(r"[^0-9a-z]")
+ASCII_WORD = re.compile(r"[0-9a-z]+")
+SPACES = re.compile(r"\s+")
 LEGAL_FORMS = frozenset(
     {"inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited", "llc"}
     | {"plc", "gmbh", "ag", "sa", "kk", "株式会社", "有限会社"}
 )
+PLACEHOLDER_PRODUCTS = frozenset({"na", "unknown", "unspecified", "none", "notapplicable"})
+PARTIAL_MATCH_LENGTH = 5
+ASCII_WORD_LENGTH = 3
 
 
 def name_key(text: str) -> str:
@@ -26,8 +30,13 @@ def vendor_key(text: str) -> str:
     return "".join(words)
 
 
-def ascii_part(key: str) -> str:
-    return NOT_ASCII.sub("", key)
+def ascii_words(text: str) -> list[str]:
+    words = ASCII_WORD.findall(unicodedata.normalize("NFKC", text).casefold())
+    return sorted((word for word in words if len(word) >= ASCII_WORD_LENGTH), key=len, reverse=True)
+
+
+def company_name(text: str) -> str:
+    return SPACES.sub(" ", unicodedata.normalize("NFKC", text)).strip()
 
 
 @dataclass(frozen=True, order=True)
@@ -70,9 +79,11 @@ class Product:
     maintainer: str | None
 
     def __post_init__(self) -> None:
-        if not self.company.strip():
+        object.__setattr__(self, "company", company_name(self.company))
+        object.__setattr__(self, "label", self.label.strip())
+        if not self.company:
             raise ValueError("会社を書く")
-        if not self.label.strip():
+        if not self.label:
             raise ValueError("呼び名を書く")
         if not self.keys:
             raise ValueError("名前の鍵を 1 つ以上書く")
@@ -94,11 +105,13 @@ class Alias:
     keys: tuple[NameKey, ...]
 
     def answers_to(self, query_key: str) -> bool:
-        return any(
-            query_key in call_key or call_key in query_key
-            for call_key in (name_key(call) for call in self.calls)
-            if call_key
-        )
+        for call_key in (name_key(call) for call in self.calls):
+            shorter, longer = sorted((call_key, query_key), key=len)
+            if shorter and (
+                shorter == longer or (len(shorter) >= PARTIAL_MATCH_LENGTH and shorter in longer)
+            ):
+                return True
+        return False
 
 
 @dataclass(frozen=True)

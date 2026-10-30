@@ -13,10 +13,12 @@ from app.application.list_products import ListProducts
 from app.application.ports import (
     AdvisorySourceError,
     CatalogReplacement,
+    ConfigurationError,
     InvalidRequest,
     NvdSyncKind,
     ReplicaError,
 )
+from app.application.rebuild_product_index import RebuildProductIndex
 from app.application.register_product import RegisterProduct
 from app.application.search_products import SearchProducts
 from app.application.sync_exploited import SyncExploited
@@ -135,7 +137,7 @@ def search_products(
     try:
         with replica(settings) as engine:
             candidates = SearchProducts(SqlProductNameIndex(engine), TomlAliasBook()).run(call)
-    except (InvalidRequest, ReplicaError) as error:
+    except (ConfigurationError, InvalidRequest, ReplicaError) as error:
         raise fail(error) from error
     if not candidates:
         typer.echo("候補が無い。呼び名を短くするか、英語の製品名で探す")
@@ -179,6 +181,17 @@ def add_product(
     except (InvalidRequest, ReplicaError) as error:
         raise fail(error) from error
     typer.echo(f"{product.company} の {product.label} を {product_id} 番で台帳に載せた")
+
+
+@products.command("reindex", help="写した脆弱性情報から、製品名の索引を作り直す")
+def reindex_products() -> None:
+    settings = load_settings()
+    try:
+        with exclusive_sync(settings.data_dir), replica(settings) as engine:
+            RebuildProductIndex(SqlAdvisoryStore(engine)).run()
+    except ReplicaError as error:
+        raise fail(error) from error
+    typer.echo("製品名の索引を作り直した")
 
 
 @products.command("list", help="会社の製品台帳を出す")

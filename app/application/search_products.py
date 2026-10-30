@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from app.application.ports import AliasBook, InvalidRequest, ProductNameIndex
-from app.domain.product import NameKey, ascii_part, name_key
+from app.domain.product import NameKey, ascii_words, name_key
 
 CANDIDATE_LIMIT = 20
 
@@ -35,8 +35,11 @@ class SearchProducts:
         covered = {key for candidate in candidates for key in candidate.keys}
         limit = CANDIDATE_LIMIT + len(covered)
         names = self._index.search(query_key, limit)
-        if not names and not candidates and ascii_part(query_key) not in ("", query_key):
-            names = self._index.search(ascii_part(query_key), limit)
+        if not names and not candidates:
+            for word in ascii_words(call):
+                names = self._index.search(word, limit)
+                if names:
+                    break
         candidates += [
             ProductCandidate(
                 name.spellings[0], (name.key,), name.spellings, name.cve_count, from_alias=False

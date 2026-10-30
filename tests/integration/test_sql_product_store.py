@@ -80,3 +80,34 @@ def test_the_ledger_keeps_products_per_company(engine: Engine) -> None:
 
     assert ledger.products("山田製作所") == [RegisteredProduct(first, fortigate, MONDAY)]
     assert ledger.products("鈴木商店") == []
+
+
+def test_placeholder_product_names_are_left_out_of_the_index(engine: Engine) -> None:
+    store = SqlAdvisoryStore(engine)
+    store.write_advisories(
+        [record("CVE-9", (), (cna_range("n/a", "n/a"), cna_range("n/a", "Android")))]
+    )
+    store.rebuild_product_names()
+
+    index = SqlProductNameIndex(engine)
+
+    assert index.search("na", limit=10) == [
+        IndexedName(NameKey("na", "android"), ("n/a Android",), 1)
+    ]
+
+
+def test_the_label_is_the_spelling_with_the_most_cves(engine: Engine) -> None:
+    store = SqlAdvisoryStore(engine)
+    store.write_advisories(
+        [
+            record("CVE-1", (), (cna_range("Fortinet", "FortiOS"),)),
+            record(
+                "CVE-2", (nvd_range("fortinet", "fortios"),), (cna_range("Fortinet", "FortiOS"),)
+            ),
+        ]
+    )
+    store.rebuild_product_names()
+
+    [name] = SqlProductNameIndex(engine).search("fortios", limit=10)
+
+    assert name.spellings == ("Fortinet FortiOS", "fortinet fortios")

@@ -1,6 +1,15 @@
 import pytest
 
-from app.domain.product import Alias, NameKey, Product, ProductRole, name_key, vendor_key
+from app.domain.product import (
+    Alias,
+    NameKey,
+    Product,
+    ProductRole,
+    ascii_words,
+    company_name,
+    name_key,
+    vendor_key,
+)
 
 FORTIOS = NameKey("fortinet", "fortios")
 
@@ -80,3 +89,25 @@ def test_an_alias_answers_to_a_query_inside_a_call_or_a_call_inside_the_query(
 )
 def test_a_vendor_key_drops_legal_forms_at_either_end(text: str, key: str) -> None:
     assert vendor_key(text) == key
+
+
+@pytest.mark.parametrize(
+    ("query", "answers"),
+    [("asa", True), ("asahi", False), ("ciscoasa", True), ("os", False), ("cisco", True)],
+)
+def test_a_short_call_only_answers_to_the_same_word(query: str, answers: bool) -> None:
+    alias = Alias("Cisco ASA", ("ASA", "Cisco ASA"), (NameKey("cisco", "asa"),))
+
+    assert alias.answers_to(query) is answers
+
+
+def test_ascii_words_are_the_longest_first_and_skip_short_ones() -> None:
+    assert ascii_words("ヤマハ RTX830 の 2 台目と NVR510") == ["rtx830", "nvr510"]
+
+
+def test_a_company_name_is_stored_in_one_spelling() -> None:
+    product = Product(
+        " Ａｃｍｅ  工業 ", "本社の FortiGate", (FORTIOS,), None, ProductRole.VPN, None
+    )
+
+    assert (product.company, company_name("Acme 工業")) == ("Acme 工業", "Acme 工業")

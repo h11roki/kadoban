@@ -6,7 +6,10 @@ from sqlalchemy import URL, Connection, Engine, create_engine, event
 from app.application.ports import ReplicaError
 
 TAKE_WRITE_LOCK = "take_write_lock"
-MIGRATION_HINT = "`uv run alembic upgrade head` を流したか確かめる"
+BUSY_TIMEOUT_SECONDS = 30
+MIGRATION_HINT = (
+    "`uv run alembic upgrade head` を流したか、ほかの取り込みが長く書いていないか確かめる"
+)
 
 
 def create_sqlite_engine(path: Path) -> Engine:
@@ -15,7 +18,10 @@ def create_sqlite_engine(path: Path) -> Engine:
         absolute.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise ReplicaError(f"手元の DB の置き場 {absolute.parent} を作れない: {error}") from error
-    engine = create_engine(URL.create("sqlite", database=str(absolute)))
+    engine = create_engine(
+        URL.create("sqlite", database=str(absolute)),
+        connect_args={"timeout": BUSY_TIMEOUT_SECONDS},
+    )
     event.listen(engine, "connect", _leave_transactions_to_sqlalchemy)
     event.listen(engine, "begin", _begin)
     return engine

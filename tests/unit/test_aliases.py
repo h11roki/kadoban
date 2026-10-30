@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from app.application.ports import ConfigurationError
 from app.domain.product import NameKey, name_key
 from app.infrastructure.aliases import TomlAliasBook
 
@@ -22,5 +23,5 @@ def test_an_alias_file_with_a_key_that_is_not_normalized_is_refused(tmp_path: Pa
     path = tmp_path / "aliases.toml"
     path.write_text('[[alias]]\nname = "X"\ncalls = ["X"]\nkeys = ["Fortinet/FortiOS"]\n')
 
-    with pytest.raises(ValueError, match="別名表"):
+    with pytest.raises(ConfigurationError, match="別名表"):
         TomlAliasBook(path)

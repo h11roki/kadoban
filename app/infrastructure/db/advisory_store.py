@@ -15,7 +15,7 @@ from app.application.ports import (
     UnreadableRecord,
 )
 from app.domain.exploited import ExploitedCatalog
-from app.domain.product import name_key, vendor_key
+from app.domain.product import PLACEHOLDER_PRODUCTS, name_key, vendor_key
 from app.infrastructure.db.engine import MIGRATION_HINT, TAKE_WRITE_LOCK
 from app.infrastructure.db.tables import (
     cna_ranges,
@@ -170,10 +170,10 @@ class SqlAdvisoryStore:
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
 
-    def rebuild_product_names(self) -> int:
+    def rebuild_product_names(self) -> None:
+        rows = []
         try:
-            with self._writer.begin() as connection:
-                rows = []
+            with self._engine.connect() as connection:
                 for source, table in (("nvd", nvd_ranges), ("cna", cna_ranges)):
                     for vendor, product, cve_count in connection.execute(
                         select(
@@ -183,7 +183,7 @@ class SqlAdvisoryStore:
                         .group_by(table.c.vendor, table.c.product)
                     ):
                         vendor_part, product_part = vendor_key(vendor), name_key(product)
-                        if vendor_part and product_part:
+                        if vendor_part and product_part not in PLACEHOLDER_PRODUCTS | {""}:
                             rows.append(
                                 {
                                     "source": source,
@@ -194,10 +194,10 @@ class SqlAdvisoryStore:
                                     "cve_count": cve_count,
                                 }
                             )
+            with self._writer.begin() as connection:
                 connection.execute(delete(product_spellings))
                 if rows:
                     connection.execute(insert(product_spellings), rows)
-                return len(rows)
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB に書けない({error.orig})。{MIGRATION_HINT}") from error
 

@@ -1,7 +1,7 @@
 from collections.abc import Collection
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, func, insert, or_, select, tuple_
+from sqlalchemy import Engine, func, insert, select, tuple_
 from sqlalchemy.exc import DBAPIError
 
 from app.application.ports import ReplicaError
@@ -9,47 +9,34 @@ from app.domain.product import IndexedName, NameKey, Product, ProductRole, Regis
 from app.infrastructure.db.engine import MIGRATION_HINT, TAKE_WRITE_LOCK
 from app.infrastructure.db.tables import product_keys, product_spellings, products
 
-SPELLING_SEPARATOR = "\x1f"
-
 
 class SqlProductNameIndex:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
     def search(self, query_key: str, limit: int) -> list[IndexedName]:
-        pattern = f"%{query_key}%"
         names = product_spellings.c
         statement = (
             select(
-                names.vendor_key,
-                names.product_key,
-                func.sum(names.cve_count).label("cve_count"),
-                func.group_concat(names.vendor + " " + names.product, SPELLING_SEPARATOR),
+                names.vendor_key, names.product_key, names.vendor, names.product, names.cve_count
             )
-            .where(
-                or_(
-                    names.product_key.like(pattern),
-                    (names.vendor_key + names.product_key).like(pattern),
-                )
-            )
-            .group_by(names.vendor_key, names.product_key)
-            .order_by(func.sum(names.cve_count).desc(), names.vendor_key, names.product_key)
-            .limit(limit)
+            .where((names.vendor_key + names.product_key).like(f"%{query_key}%"))
+            .order_by(names.cve_count.desc(), names.vendor, names.product)
         )
+        spellings: dict[tuple[str, str], dict[str, None]] = {}
+        totals: dict[tuple[str, str], int] = {}
         try:
             with self._engine.connect() as connection:
-                return [
-                    IndexedName(
-                        NameKey(vendor_key, product_key),
-                        tuple(dict.fromkeys(spellings.split(SPELLING_SEPARATOR))),
-                        cve_count,
-                    )
-                    for vendor_key, product_key, cve_count, spellings in connection.execute(
-                        statement
-                    )
-                ]
+                for vendor_key, product_key, vendor, product, cve_count in connection.execute(
+                    statement
+                ):
+                    key = (vendor_key, product_key)
+                    spellings.setdefault(key, {})[f"{vendor} {product}"] = None
+                    totals[key] = totals.get(key, 0) + cve_count
         except DBAPIError as error:
             raise ReplicaError(f"手元の DB を読めない({error.orig})。{MIGRATION_HINT}") from error
+        ranked = sorted(totals, key=lambda key: (-totals[key], key))[:limit]
+        return [IndexedName(NameKey(*key), tuple(spellings[key]), totals[key]) for key in ranked]
 
     def cve_counts(self, keys: Collection[NameKey]) -> dict[NameKey, int]:
         if not keys:

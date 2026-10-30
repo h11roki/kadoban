@@ -17,6 +17,10 @@ class ReplicaError(Exception):
     pass
 
 
+class ConfigurationError(Exception):
+    pass
+
+
 class InvalidRequest(Exception):
     pass
 
@@ -82,7 +86,7 @@ class AdvisoryStore(Protocol):
         self, kind: NvdSyncKind, released: datetime, synced_at: datetime
     ) -> None: ...
 
-    def rebuild_product_names(self) -> int: ...
+    def rebuild_product_names(self) -> None: ...
 
 
 class ProductNameIndex(Protocol):
